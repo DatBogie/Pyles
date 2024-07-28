@@ -1,11 +1,10 @@
 from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QFrame, QScrollArea, QHBoxLayout, QLineEdit, QCheckBox, QMenu, QInputDialog, QErrorMessage, QMessageBox
 from PyQt6.QtCore import Qt
 from functools import partial
-import os, shutil, subprocess, random, send2trash
+import os, shutil, subprocess, random, send2trash, json
 
 __start__ = False
 
-user = os.getlogin()
 files = []
 hfiles = []
 path=""
@@ -14,6 +13,22 @@ pins = []
 tabs = {}
 ids = [""]
 tab = None
+
+user = os.getlogin()
+program_path = f"/home/{user}"
+# program_path = f"/home/{user}/Documents/Python/Pyles" # Testing
+try:
+    os.mkdir(program_path+"/.Pyles")
+except:pass
+if os.path.exists(program_path+"/.Pyles/pins.json"):
+    file_pins = open(program_path+"/.Pyles/pins.json","r")
+    try:
+        pinned = json.load(file_pins)
+    except:pass
+else:
+    file_pins = open(program_path+"/.Pyles/pins.json","w")
+file_pins.close()
+
 
 def gen_uid():
     global ids
@@ -39,12 +54,10 @@ def get_file_from_str(fp):
         return f
 
 def open_file_with_default_program(file_path):
-    # if sys.platform == "win32":
-    #     os.startfile(file_path)
-    # elif sys.platform == "darwin":  # macOS
-    #     subprocess.run(["open", file_path])
-    # else:  # Linux
-    subprocess.run(["xdg-open", file_path])
+    if os.access(file_path, os.X_OK):
+        subprocess.run(file_path)
+    else:
+        subprocess.run(["xdg-open", file_path])
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -155,6 +168,8 @@ class MainWindow(QMainWindow):
         if not __start__:
             self.add_tab()
             self.get_files()
+            for x in pinned:
+                self.pin_tab(x,True)
     
     def goto(self):
         t = self.input.text()
@@ -180,6 +195,7 @@ class MainWindow(QMainWindow):
         if _dir == "~":
             _dir = f"/home/{user}"
         path = _dir
+        self.setWindowTitle(f"Pyles | {path}")
         tabs[tab][0] = path
         _path = path[:path.rfind(path.split("/")[-1])-1]
         _pathTxt = _path
@@ -292,20 +308,16 @@ class MainWindow(QMainWindow):
         self.tab_layout.addWidget(tabB)
         self.to_tab(tab)
 
-    def pin_tab(self,_tab):
+    def pin_tab(self,_tab,force_pin=False):
         global pinned, pins, tabs
         if _tab in tabs:
             dir = tabs[_tab][0]
         else:
             dir = _tab
 
-        if dir in pinned:
-            self.pins_layout.removeWidget(pins[pinned.index(dir)])
-            pins[pinned.index(dir)].deleteLater()
-            del pins[pinned.index(dir)]
-            del pinned[pinned.index(dir)]
-        else:
-            pinned.append(dir)
+        if force_pin or not dir in pinned:
+            if not dir in pinned:
+                pinned.append(dir)
             n = dir
             if n[-1] == "/":
                 n = n[:-1]
@@ -316,6 +328,11 @@ class MainWindow(QMainWindow):
             pinB.customContextMenuRequested.connect(partial(self.pin_context,dir))
             self.pins_layout.addWidget(pinB)
             pins.append(pinB)
+        elif dir in pinned:
+            self.pins_layout.removeWidget(pins[pinned.index(dir)])
+            pins[pinned.index(dir)].deleteLater()
+            del pins[pinned.index(dir)]
+            del pinned[pinned.index(dir)]
 
 
     def tab_context(self,_tab,position):
@@ -331,6 +348,12 @@ class MainWindow(QMainWindow):
     def pin_context(self,dir,position):
         global pinned, pins
         menu = QMenu()
+        if get_file_from_str(dir).is_dir():
+            otab = menu.addAction("Open in new tab")
+            otab.triggered.connect(partial(self.add_tab,dir))
+        else:
+            ofile = menu.addAction("Open file")
+            ofile.triggered.connect(partial(self.open_file,get_file_from_str(dir)))
         unpin = menu.addAction("Unpin")
         unpin.triggered.connect(partial(self.pin_tab,dir))
         if dir in pinned:
@@ -398,3 +421,6 @@ if __name__ == "__main__":
     window = MainWindow()
     window.show()
     app.exec()
+    _pinned = open(program_path+"/.Pyles/pins.json","w")
+    json.dump(pinned,_pinned)
+    _pinned.close()
