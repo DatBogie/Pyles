@@ -1,2 +1,2 @@
 # Pyles
-A very simple file manager written in Python and using Qt6
+A very simple file manager written in Python that uses Qt6.
