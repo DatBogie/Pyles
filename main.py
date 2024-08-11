@@ -29,8 +29,13 @@ except:pass
 if os.path.exists(program_path+f"{s}.Pyles{s}pins.json"):
     file_pins = open(program_path+f"{s}.Pyles{s}pins.json","r")
     try:
-        pinned = json.load(file_pins)
-    except:pass
+        __pinned__ = []
+        for x in json.load(file_pins):
+            if os.path.exists(x):
+                __pinned__.append(x)
+        pinned = __pinned__
+    except Exception as e:
+        print(e)
 else:
     file_pins = open(program_path+f"{s}.Pyles{s}pins.json","w")
 file_pins.close()
@@ -66,9 +71,19 @@ def get_file_from_str(fp):
 def open_file_with_default_program(file_path):
     if sys.platform == "linux":
         if os.access(file_path, os.X_OK):
-            subprocess.run(file_path)
+            subprocess.Popen(file_path)
         else:
-            subprocess.run(["xdg-open", file_path])
+            print("xdg-open " + file_path.path)
+            myEnv = dict(os.environ)
+            lp_key = 'LD_LIBRARY_PATH'
+            lp_orig = myEnv.get(lp_key + '_ORIG')
+            if lp_orig is not None:
+                myEnv[lp_key] = lp_orig
+            else:
+                lp = myEnv.get(lp_key)
+                if lp is not None:
+                    myEnv.pop(lp_key)
+            subprocess.call(["xdg-open", file_path.path], env=myEnv)
     elif sys.platform == "win32":
         os.startfile(file_path)
 
@@ -96,7 +111,7 @@ class MainWindow(QMainWindow):
         self.button_layout.addWidget(self.go)
 
         # New File
-        self.new_file = QPushButton("New File")
+        self.new_file = QPushButton("New...")
         self.new_file.clicked.connect(self.add_file)
         self.new_file.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.new_file.customContextMenuRequested.connect(self.new_file_context)
@@ -209,9 +224,11 @@ class MainWindow(QMainWindow):
     def start(self):
         global __start__
         if not __start__:
+            __start__ = True
             self.add_tab()
             self.get_files()
             for x in pinned:
+                if not get_file_from_str(x): continue
                 self.pin_tab(x,True)
             self.search_inp.setVisible(False)
             self.search_go.setVisible(False)
@@ -226,7 +243,7 @@ class MainWindow(QMainWindow):
         t = self.input.text()
         t = t.replace("~",f"{home}{s}{user}")
         f = get_file_from_str(t)
-        self.open_file(f)
+        self.open_file(f or t)
 
     def open_file(self, f):
         if f:
@@ -236,7 +253,10 @@ class MainWindow(QMainWindow):
                 else:
                     open_file_with_default_program(f)
             else:
-                self.get_files(root)
+                if f.lower() != "trash":
+                    self.get_files(root)
+                else:
+                    self.get_files(f)
         else:
             QMessageBox.warning(self,"Open Error",f"Invalid file/directory!")
 
@@ -244,6 +264,11 @@ class MainWindow(QMainWindow):
         global user, path, files, hfiles, tab, tabs
         if _dir == "~":
             _dir = f"{home}{s}{user}"
+        if _dir.lower() == "trash":
+            if sys.platform == "linux":
+                _dir = f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files"
+            else:
+                QMessageBox.critical(self,"Pyles","Cannot view Recycle Bin in Windows at this time!",QMessageBox.StandardButton.Ok)
         path = _dir
         self.setWindowTitle(f"Pyles | {path}")
         tabs[tab][0] = path
@@ -317,7 +342,7 @@ class MainWindow(QMainWindow):
         else:
             x = ty
         if x != QMessageBox.StandardButton.Cancel:
-            n, ok = QInputDialog.getText(self,"Create File","Enter file name")
+            n, ok = QInputDialog.getText(self,"Create "+("Folder" if x == 3 else "File"),"Enter " + ("folder" if x == 3 else "file") + " name...")
             if n:
                 if not os.path.exists(tabs[tab][0]+n):
                     # print(x,_folder)
@@ -522,6 +547,7 @@ class MainWindow(QMainWindow):
     def pin_context(self,dir,position):
         global pinned, pins
         menu = QMenu()
+        if not get_file_from_str(dir): return
         if get_file_from_str(dir).is_dir():
             otab = menu.addAction("Open in new tab")
             otab.triggered.connect(partial(self.add_tab,dir))
@@ -536,41 +562,98 @@ class MainWindow(QMainWindow):
     def file_context(self,f:os.DirEntry,btn,position):
         global pinned
         menu = QMenu()
+        if tabs[tab][0] == f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files":
+            etrash = menu.addAction("Empty Trash")
+            etrash.triggered.connect(partial(self.delete_file,"EMPTY_TRASH"))
         if f.is_dir():
             opent = menu.addAction("Open in New Tab")
             opent.triggered.connect(partial(self.add_tab,f.path))
         else:
             opent = menu.addAction("Open File")
             opent.triggered.connect(partial(self.open_file,f))
-        rename = menu.addAction("Rename")
+        rename = menu.addAction("Rename to...")
         rename.triggered.connect(partial(self.move_file,f,f"Rename {f.name} to..."))
-        delete = menu.addAction("Send to Trash")
-        delete.triggered.connect(partial(self.delete_file,f))
-        move = menu.addAction("Move")
+        if tabs[tab][0] != f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files":
+            trash = menu.addAction("Send to Trash")
+            trash.triggered.connect(partial(self.trash_file,f))
+        move = menu.addAction("Move to...")
         move.triggered.connect(partial(self.move_file,f))
+        copy = menu.addAction("Copy to...")
+        copy.triggered.connect(partial(self.copy_file,f))
+        delete = menu.addAction("Delete")
+        delete.triggered.connect(partial(self.delete_file,f))
         pin = menu.addAction(("Pin" if not f.path in pinned else "Unpin") + " " + ("Folder" if f.is_dir() else "File"))
         pin.triggered.connect(partial(self.pin_tab,f.path))
         menu.exec(btn.mapToGlobal(position))
 
     def new_file_context(self,position):
         menu = QMenu()
-        nfile = menu.addAction("+ New File")
+        nfile = menu.addAction("New File...")
         nfile.triggered.connect(partial(self.add_file,2))
-        nfolder = menu.addAction("New Folder")
+        nfolder = menu.addAction("New Folder...")
         nfolder.triggered.connect(partial(self.add_file,3))
         menu.exec(self.new_file.mapToGlobal(position))
 
-    def delete_file(self,f:os.DirEntry):
-        global tab, tabs
+    def trash_file(self,f:os.DirEntry):
         if os.path.exists(f):
             send2trash.send2trash(f.path)
             self.get_files(tabs[tab][0])
+    
+    def delete_file(self,f:os.DirEntry):
+        if type(f) != str and f != "EMPTY_TRASH":
+            msg = QMessageBox()
+            msg.setWindowTitle("Delete " + ("Folder" if f.is_dir() else "File"))
+            msg.setText(f"Are you sure you want to delete {f.name}?")
+            msg.setIcon(QMessageBox.Icon.Question)
+            msg.addButton(QMessageBox.StandardButton.Yes)
+            msg.addButton(QMessageBox.StandardButton.No)
+            msg.setDefaultButton(QMessageBox.StandardButton.No)
+            x = msg.exec()
+            if x == QMessageBox.StandardButton.Yes:
+                if os.path.exists(f):
+                    if f.is_file():
+                        try:
+                            os.remove(f)
+                        except Exception as e:
+                            self.error_msg.showMessage(str(e))
+                    else:
+                        try:
+                            os.rmdir(f)
+                        except OSError as e:
+                            if e.errno == 39 and tabs[tab][0] == f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files":
+                                try:
+                                    shutil.rmtree(f.path)
+                                except Exception as e:
+                                    self.error_msg.showMessage(str(e))
+                            else:
+                                self.error_msg.showMessage(str(e))
+                    self.get_files(tabs[tab][0])
+        else:
+            msg = QMessageBox()
+            msg.setWindowTitle("Empty Trash")
+            msg.setText("Are you sure you want to empty the trash?\nYou won't be able to restore these files if you do.")
+            msg.setIcon(QMessageBox.Icon.Question)
+            msg.addButton(QMessageBox.StandardButton.Yes)
+            msg.addButton(QMessageBox.StandardButton.No)
+            msg.setDefaultButton(QMessageBox.StandardButton.No)
+            x = msg.exec()
+            if x == QMessageBox.StandardButton.Yes:
+                for f in os.scandir(f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files"):
+                    if f.is_file():
+                        os.remove(f)
+                    else:
+                        shutil.rmtree(f.path)
+                self.get_files(tabs[tab][0])
 
     def move_file(self,f:os.DirEntry,prompt=None):
         if not prompt:
             prompt = f"Move {f.name} from {f.path[:-len(f.name)]} to..."
         global tab, tabs
         fp, ok = QInputDialog.getText(self, "Move " + "Folder" if f.is_dir() else "File", prompt)
+        if fp[:2] == f".{s}":
+            fp = tabs[tab][0]+s+fp[2:]
+        if fp[:2] == f"~{s}":
+            fp = home+s+user+s+fp[2:]
         if ok and fp:
             if fp[-1] == f"{s}": fp=fp[:-1]
             if not os.path.exists(fp+f"{s}"+f.name):
@@ -595,6 +678,56 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self,"Move Error",f"Destination's path {fpp} doesn't exist!")
             else:
                 QMessageBox.warning(self,"Move Error",f"Destination {fp} already exists!")
+
+    def copy_file(self,f:os.DirEntry):
+        global tab, tabs
+        fp, ok = QInputDialog.getText(self, "Copy " + ("Folder" if f.is_dir() else "File"), f"Copy {f.name} to...")
+        if fp == ".": fp = f".{s}"
+        if fp[:2] == f".{s}":
+            fp = tabs[tab][0]+s+fp[2:]
+        if fp[:2] == f"~{s}":
+            fp = home+s+user+s+fp[2:]
+        if ok and fp:
+            if fp[-1] == f"{s}": fp=fp[:-1]
+            if os.path.exists(fp+f"{s}"):
+                # print(f"fp={fp}",fp.find(f"{s}"))
+                if fp.find(f"{s}") != -1:
+                    fn = fp[fp.rfind(f"{s}")+1:]
+                    fpp = fp[:fp.rfind(f"{s}")]
+                else:
+                    fn = fp
+                    fpp = ""
+                if (not fpp or fpp == "") or ((fpp and fpp!="") and os.path.exists(fp)):
+                    try:
+                        if not fpp or fpp == "":
+                            # print(f.path,f.path[:-(len(f.name))]+fn)
+                            if f.is_file():
+                                shutil.copyfile(f.path,f.path[:-(len(f.name))]+fn)
+                            else:
+                                shutil.copytree(f.path,f.path[:-(len(f.name))]+fn)
+                        else:
+                            name, ok = QInputDialog.getText(self, "Copy " + ("Folder" if f.is_dir() else "File"), f"Rename copied " + ("folder" if f.is_dir() else "file") + f" from {f.name} to...")
+                            if not ok: return
+                            if ok and not name or name == "": name = f.name
+                            while os.path.exists(fp+f"{s}"+name):
+                                name, ok = QInputDialog.getText(self, "Copy " + ("Folder" if f.is_dir() else "File"), f"Rename copied " + ("folder" if f.is_dir() else "file") + f" from {f.name} to...")
+                                if ok and not name or name == "": name = f.name
+                                if not ok: return
+                            if f.is_file():
+                                shutil.copyfile(f.path,fp+f"{s}"+name)
+                            else:
+                                shutil.copytree(f.path,fp+f"{s}"+name)
+                        self.get_files(tabs[tab][0])
+                    except Exception as e:
+                        self.error_msg.showMessage(str(e))
+                else:
+                    QMessageBox.warning(self,"Copy Error",f"Destination's path {fpp} doesn't exist!")
+                    print(fpp,fp)
+            else:
+                print(fp)
+                print(fp+f"{s}"+f.name)
+                QMessageBox.warning(self,"Copy Error",f"Destination {fp} doesn't exist!")
+
 
 if __name__ == "__main__":
     app = QApplication([])
