@@ -20,6 +20,16 @@ s = "/" if sys.platform != "win32" else "\\"
 home = f"{s}home" if sys.platform != "win32" else f"C:{s}Users"
 root = f"{s}" if sys.platform != "win32" else f"C:{s}"
 
+myEnv = dict(os.environ)
+lp_key = 'LD_LIBRARY_PATH'
+lp_orig = myEnv.get(lp_key + '_ORIG')
+if lp_orig is not None:
+    myEnv[lp_key] = lp_orig
+else:
+    lp = myEnv.get(lp_key)
+    if lp is not None:
+        myEnv.pop(lp_key)
+
 user = os.getlogin()
 program_path = f"{home}{s}{user}"
 # program_path = f"{home}{s}{user}{s}Documents{s}Python{s}Pyles" # Testing
@@ -73,16 +83,6 @@ def open_file_with_default_program(file_path):
         if os.access(file_path, os.X_OK):
             subprocess.Popen(file_path)
         else:
-            print("xdg-open " + file_path.path)
-            myEnv = dict(os.environ)
-            lp_key = 'LD_LIBRARY_PATH'
-            lp_orig = myEnv.get(lp_key + '_ORIG')
-            if lp_orig is not None:
-                myEnv[lp_key] = lp_orig
-            else:
-                lp = myEnv.get(lp_key)
-                if lp is not None:
-                    myEnv.pop(lp_key)
             subprocess.call(["xdg-open", file_path.path], env=myEnv)
     elif sys.platform == "win32":
         os.startfile(file_path)
@@ -260,8 +260,19 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self,"Open Error",f"Invalid file/directory!")
 
+    def open_with(self,f:os.DirEntry):
+        cmd, ok = QInputDialog.getText(self,"Open With","Enter program command/executable path...")
+        if ok and cmd:
+            try:
+                if cmd != "gtk-launch":
+                    subprocess.Popen([cmd,f.path],env=myEnv)
+                else:
+                    subprocess.Popen([cmd,f.name.split(".desktop")[0]],env=myEnv)
+            except Exception as e:
+                self.error_msg.showMessage(str(e))
+
     def get_files(self,_dir=f"~",fi=None):
-        global user, path, files, hfiles, tab, tabs
+        global path, files, hfiles, tabs
         if _dir == "~":
             _dir = f"{home}{s}{user}"
         if _dir.lower() == "trash":
@@ -320,7 +331,6 @@ class MainWindow(QMainWindow):
         self.scroll_layout.update()
 
     def on_button_click(self):
-        global path
         _path = path[:path.rfind(path.split(f"{s}")[-1])-1]
         if _path != root[:-1]:
             self.get_files(_path)
@@ -328,7 +338,6 @@ class MainWindow(QMainWindow):
             self.get_files(f"{root}")
 
     def add_file(self,ty):
-        global tab, tabs
         if not ty:
             msg = QMessageBox()
             msg.setWindowTitle("Create File")
@@ -355,12 +364,10 @@ class MainWindow(QMainWindow):
 
 
     def search(self):
-        global tab, tabs, smode
         query = self.search_inp.text().lower()
         ls = []
         if query and query != "":
             def b():
-                global ssort
                 nonlocal ls
                 if ssort == 1:
                     ls.sort(key=lambda f: f.name)
@@ -419,7 +426,6 @@ class MainWindow(QMainWindow):
             self.get_files(tabs[tab][0],[])
     
     def tog_hide(self):
-        global hfiles
         val = self.hide_tog.checkState().value == 2
         for x in hfiles:
             if val:
@@ -428,7 +434,7 @@ class MainWindow(QMainWindow):
                 x.hide()
 
     def to_tab(self,_tab):
-        global tab, tabs
+        global tab
         # print(_tab,tabs[_tab][0])
         tab = _tab
         tabs[tab][1].setText(f"[Tab {list(tabs.keys()).index(tab)+1}]")
@@ -461,7 +467,7 @@ class MainWindow(QMainWindow):
         self.to_tab(tab)
 
     def pin_tab(self,_tab,force_pin=False):
-        global pinned, pins, tabs
+        global pinned, pins
         if _tab in tabs:
             dir = tabs[_tab][0]
         else:
@@ -535,7 +541,6 @@ class MainWindow(QMainWindow):
         menu.exec(self.search_btn.mapToGlobal(position))
 
     def tab_context(self,_tab,position):
-        global tabs, pinned
         # print(_tab,list(tabs.keys())[-1])
         menu = QMenu()
         close = menu.addAction("Close Tab")
@@ -545,7 +550,6 @@ class MainWindow(QMainWindow):
         menu.exec(tabs[_tab][1].mapToGlobal(position))
 
     def pin_context(self,dir,position):
-        global pinned, pins
         menu = QMenu()
         if not get_file_from_str(dir): return
         if get_file_from_str(dir).is_dir():
@@ -560,7 +564,6 @@ class MainWindow(QMainWindow):
             menu.exec(pins[pinned.index(dir)].mapToGlobal(position))
 
     def file_context(self,f:os.DirEntry,btn,position):
-        global pinned
         menu = QMenu()
         if tabs[tab][0] == f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files":
             etrash = menu.addAction("Empty Trash")
@@ -571,6 +574,9 @@ class MainWindow(QMainWindow):
         else:
             opent = menu.addAction("Open File")
             opent.triggered.connect(partial(self.open_file,f))
+        if sys.platform == "linux":
+            openw = menu.addAction("Open with...")
+            openw.triggered.connect(partial(self.open_with,f))
         rename = menu.addAction("Rename to...")
         rename.triggered.connect(partial(self.move_file,f,f"Rename {f.name} to..."))
         if tabs[tab][0] != f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files":
@@ -648,7 +654,6 @@ class MainWindow(QMainWindow):
     def move_file(self,f:os.DirEntry,prompt=None):
         if not prompt:
             prompt = f"Move {f.name} from {f.path[:-len(f.name)]} to..."
-        global tab, tabs
         fp, ok = QInputDialog.getText(self, "Move " + "Folder" if f.is_dir() else "File", prompt)
         if fp[:2] == f".{s}":
             fp = tabs[tab][0]+s+fp[2:]
@@ -680,7 +685,6 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self,"Move Error",f"Destination {fp} already exists!")
 
     def copy_file(self,f:os.DirEntry):
-        global tab, tabs
         fp, ok = QInputDialog.getText(self, "Copy " + ("Folder" if f.is_dir() else "File"), f"Copy {f.name} to...")
         if fp == ".": fp = f".{s}"
         if fp[:2] == f".{s}":
