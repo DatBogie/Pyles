@@ -1,24 +1,16 @@
-from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QFrame, QScrollArea, QHBoxLayout, QLineEdit, QCheckBox, QMenu, QInputDialog, QErrorMessage, QMessageBox, QLabel, QStyle
+from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QFrame, QScrollArea, QHBoxLayout, QLineEdit, QCheckBox, QMenu, QInputDialog, QErrorMessage, QMessageBox, QLabel, QStyle, QMenuBar
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QAction
 from functools import partial
-import os, sys, shutil, subprocess, random, send2trash, json, screeninfo
+import os, sys, shutil, subprocess, random, send2trash, json, screeninfo, webbrowser
 
-__start__ = False
-
-files = []
-hfiles = []
-path=""
 pinned = []
 pins = []
-tabs = {}
-ids = [""]
-tab = None
-smode = 0 # search cur dir
-ssort = 1 # alphabetical sort
 s = "/" if sys.platform != "win32" else "\\"
 home = f"{s}home" if sys.platform != "win32" else f"C:{s}Users"
 root = f"{s}" if sys.platform != "win32" else f"C:{s}"
+user = os.getlogin()
+trash = f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files" if sys.platform == "linux" else f"{root}$Recycle.Bin"
 
 myEnv = dict(os.environ)
 lp_key = 'LD_LIBRARY_PATH'
@@ -30,9 +22,7 @@ else:
     if lp is not None:
         myEnv.pop(lp_key)
 
-user = os.getlogin()
 program_path = f"{home}{s}{user}"
-# program_path = f"{home}{s}{user}{s}Documents{s}Python{s}Pyles" # Testing
 try:
     os.mkdir(program_path+f"{s}.Pyles")
 except:pass
@@ -50,15 +40,13 @@ else:
     file_pins = open(program_path+f"{s}.Pyles{s}pins.json","w")
 file_pins.close()
 
-
-def gen_uid():
-    global ids
+def gen_uid(ids):
     id = ""
     while id in ids:
         id = ""
         for i in range(10):
             id+=str(random.randint(0,9))
-    ids.append(id)
+    # ids.append(id)
     return id
 
 def get_file_from_str(fp):
@@ -93,9 +81,25 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Pyles")
         self.setGeometry(int(screeninfo.get_monitors()[0].width/2 - 400), int(screeninfo.get_monitors()[0].height/2 - 300), 800, 600)  # x, y, width, height
 
-        # Create the main button
-        self.button = QPushButton("Up to")
-        self.button.clicked.connect(self.on_button_click)
+        self.files = []
+        self.hfiles = []
+        self.path = ""
+
+        self.tabs = {}
+        self.tab = None
+        self.ids = [""]
+
+        self.smode = 0
+        self.ssort = 1
+
+        self.back_dir = QPushButton("<<")
+        self.back_dir.clicked.connect(self.back_one_dir)
+
+        self.fwd_dir = QPushButton(">>")
+        self.fwd_dir.clicked.connect(self.fwd_one_dir)
+
+        self.up_dir = QPushButton("Up to")
+        self.up_dir.clicked.connect(self.up_one_dir)
 
         self.input = QLineEdit()
         self.input.setPlaceholderText("Enter path here...")
@@ -106,7 +110,9 @@ class MainWindow(QMainWindow):
 
         # Create a layout for the button
         self.button_layout = QHBoxLayout()
-        self.button_layout.addWidget(self.button)
+        self.button_layout.addWidget(self.back_dir)
+        self.button_layout.addWidget(self.fwd_dir)
+        self.button_layout.addWidget(self.up_dir)
         self.button_layout.addWidget(self.input)
         self.button_layout.addWidget(self.go)
 
@@ -130,7 +136,7 @@ class MainWindow(QMainWindow):
 
         # Search Btn
         self.search_btn = QPushButton("Search")
-        self.search_btn.clicked.connect(partial(self.tog_el,(self.search_inp,self.search_go)))
+        self.search_btn.clicked.connect(partial(self.tog_el,(self.search_inp,self.search_go),-1))
         self.search_btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.search_btn.customContextMenuRequested.connect(self.search_context)
 
@@ -219,24 +225,109 @@ class MainWindow(QMainWindow):
         _font.setPointSize(30)
         self.working.setFont(_font)
 
+        self.about_frame = QFrame()
+        self.about_frame.setGeometry(int(screeninfo.get_monitors()[0].width/2 - 300), int(screeninfo.get_monitors()[0].height/2 - 200), 600, 400)
+        self.about_frame.setWindowFlag(Qt.WindowType.Popup)
+
+        about_title = QLabel("About Pyles")
+        about_title.setFixedWidth(600)
+        about_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        _about_font = _font
+        _about_font.setPointSize(20)
+        about_title.setFont(_about_font)
+
+        about_body = QLabel('Version: 1.0.5<br>A simple file manager written in Python.<br>Gui made with Qt6 using PyQt6.<br>Made by Dat Bogie (<a href="https://github.com/DatBogie">GitHub</a>).')
+        about_body.setTextFormat(Qt.TextFormat.RichText)
+        def _link_to(event):
+            if event.button() == Qt.MouseButton.LeftButton:
+                if sys.platform == "linux":
+                    subprocess.Popen(["xdg-open","https://github.com/DatBogie"],env=myEnv)
+                else:
+                    webbrowser.open("https://github.com/DatBogie")
+        about_body.mousePressEvent = _link_to
+
+        about_layout = QVBoxLayout()
+        about_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        about_layout.addWidget(about_title)
+        about_layout.addWidget(about_body)
+
+        self.about_frame.setLayout(about_layout)
+
+        menu_bar = self.menuBar()
+
+        menu_file = QMenu("&File",self)
+        menu_bar.addMenu(menu_file)
+
+        new_menu = QMenu("&New...",self)
+        menu_file.addMenu(new_menu)
+
+        new_menu_file = QAction("New &File...",self)
+        new_menu.addAction(new_menu_file)
+
+        new_menu_folder = QAction("New F&older...",self)
+        new_menu.addAction(new_menu_folder)
+
+        new_menu_file.triggered.connect(partial(self.add_file,2))
+        new_menu_folder.triggered.connect(partial(self.add_file,3))
+
+        menu_file.addSeparator()
+
+        new_window_action = QAction("New &Window",self)
+        menu_file.addAction(new_window_action)
+
+        new_window_action.triggered.connect(self.new_window)
+
+        menu_file.addSeparator()
+
+        exit_action = QAction("E&xit",self)
+        menu_file.addAction(exit_action)
+
+        exit_action.triggered.connect(self.close)
+
+        menu_edit = QMenu("&Edit",self)
+        menu_bar.addMenu(menu_edit)
+
+        search_action = QAction("&Search",self)
+        menu_edit.addAction(search_action)
+        
+        search_action.triggered.connect(self.show_search)
+
+        menu_help = QMenu("&Help",self)
+        menu_bar.addMenu(menu_help)
+
+        about_action = QAction("&About",self)
+        menu_help.addAction(about_action)
+        about_action.triggered.connect(self.show_about)
+
         self.start()
     
     def start(self):
-        global __start__
-        if not __start__:
-            __start__ = True
-            self.add_tab()
-            self.get_files()
-            for x in pinned:
-                if not get_file_from_str(x): continue
-                self.pin_tab(x,True)
-            self.search_inp.setVisible(False)
-            self.search_go.setVisible(False)
+        self.add_tab()
+        self.get_files()
+        for x in pinned:
+            if not get_file_from_str(x): continue
+            self.pin_tab(x,True)
+        self.search_inp.setVisible(False)
+        self.search_go.setVisible(False)
     
-    def tog_el(self,els:tuple):
+    def show_about(self):
+        self.about_frame.setGeometry(int((self.pos().x() + (self.width()/2)) - 300), int((self.pos().y() + (self.height()/2)) - 200), 600, 400)
+        self.tog_el((self.about_frame,),True)
+    
+    def show_search(self):
+        self.tog_el((self.search_inp,self.search_go),True)
+        self.search_inp.setFocus(Qt.FocusReason.MouseFocusReason)
+    
+    def new_window(self):
+        MainWindow().show()
+    
+    def tog_el(self,els:tuple,val=-1):
         for el in els:
             try:
-                el.setVisible(not el.isVisible())
+                if val != True and val != False:
+                    el.setVisible(not el.isVisible())
+                else:
+                    el.setVisible(val)
             except:pass
     
     def goto(self):
@@ -261,44 +352,53 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self,"Open Error",f"Invalid file/directory!")
 
     def open_with(self,f:os.DirEntry):
-        cmd, ok = QInputDialog.getText(self,"Open With","Enter program command/executable path...")
-        if ok and cmd:
-            try:
-                if cmd != "gtk-launch":
-                    subprocess.Popen([cmd,f.path],env=myEnv)
-                else:
-                    subprocess.Popen([cmd,f.name.split(".desktop")[0]],env=myEnv)
-            except Exception as e:
-                self.error_msg.showMessage(str(e))
+        if sys.platform == "linux":
+            cmd, ok = QInputDialog.getText(self,"Open With","Enter program command/executable path...")
+            if ok and cmd:
+                try:
+                    if cmd != "gtk-launch":
+                        try:
+                            subprocess.Popen([cmd,f.path],env=myEnv)
+                        except Exception as e:
+                            self.error_msg.showMessage(str(e))
+                    else:
+                        try:
+                            subprocess.Popen([cmd,f.name.split(".desktop")[0]],env=myEnv)
+                        except Exception as e:
+                            self.error_msg.showMessage(str(e))
+                except Exception as e:
+                    self.error_msg.showMessage(str(e))
+        else:
+            subprocess.Popen(["openwith.exe",f.path],env=myEnv)
+            # os.system(f'openwith.exe "{f.path}"')
 
     def get_files(self,_dir=f"~",fi=None):
-        global path, files, hfiles, tabs
         if _dir == "~":
             _dir = f"{home}{s}{user}"
         if _dir.lower() == "trash":
-            if sys.platform == "linux":
-                _dir = f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files"
-            else:
-                QMessageBox.critical(self,"Pyles","Cannot view Recycle Bin in Windows at this time!",QMessageBox.StandardButton.Ok)
-        path = _dir
-        self.setWindowTitle(f"Pyles | {path}")
-        tabs[tab][0] = path
-        _path = path[:path.rfind(path.split(f"{s}")[-1])-1]
+           _dir = trash
+        if _dir != self.tabs[self.tab][0] and not _dir in self.tabs[self.tab][3]:
+            self.tabs[self.tab][3].insert(self.tabs[self.tab][4]+1,_dir)
+            self.tabs[self.tab][4] += 1
+        self.path = _dir
+        self.setWindowTitle(f"Pyles | {self.path}")
+        self.tabs[self.tab][0] = self.path
+        _path = self.path[:self.path.rfind(self.path.split(f"{s}")[-1])-1]
         _pathTxt = _path
         if _path == "": _pathTxt = f"{root}"
-        self.button.setText(("Up to " + _pathTxt) if (_pathTxt != path and path != root) else "__hide__")
-        if self.button.text() == "__hide__":
-            self.button.hide()
+        self.up_dir.setText(("Up to " + _pathTxt) if (_pathTxt != self.path and self.path != root) else "__hide__")
+        if self.up_dir.text() == "__hide__":
+            self.up_dir.hide()
         else:
-            self.button.show()
-        # self.button.setText(path + " >> " + (f"{s}" if _path == "" else _path))
-        self.input.setText(path)
-        if len(files) > 0:
-            for x in files:
+            self.up_dir.show()
+        # self.up_dir.setText(path + " >> " + (f"{s}" if _path == "" else _path))
+        self.input.setText(self.path)
+        if len(self.files) > 0:
+            for x in self.files:
                 self.scroll_layout.removeWidget(x)
                 x.deleteLater()
-        files = []
-        hfiles = []
+        self.files = []
+        self.hfiles = []
         if not fi:
             try:
                 for f in os.scandir(_dir):
@@ -310,8 +410,8 @@ class MainWindow(QMainWindow):
                     self.scroll_layout.addWidget(fButton)
                     if f.name[0] == ".":
                         fButton.hide()
-                        hfiles.append(fButton)
-                    files.append(fButton)
+                        self.hfiles.append(fButton)
+                    self.files.append(fButton)
             except Exception as e:
                 self.error_msg.showMessage(str(e))
         else:
@@ -324,14 +424,34 @@ class MainWindow(QMainWindow):
                 self.scroll_layout.addWidget(fButton)
                 if f.name[0] == ".":
                     fButton.hide()
-                    hfiles.append(fButton)
-                files.append(fButton)
+                    self.hfiles.append(fButton)
+                self.files.append(fButton)
         
         # Ensure layout updates are processed
         self.scroll_layout.update()
 
-    def on_button_click(self):
-        _path = path[:path.rfind(path.split(f"{s}")[-1])-1]
+    def back_one_dir(self):
+        self.tabs[self.tab][4] -= 1
+        if self.tabs[self.tab][4] < 0:
+            self.tabs[self.tab][4] = 0
+        else:
+            self.tabs[self.tab][0] = self.tabs[self.tab][3][self.tabs[self.tab][4]]
+            # del self.tabs[self.tab][3][self.tabs[self.tab][4]]
+        self.get_files(self.tabs[self.tab][0])
+        print(self.tabs[self.tab][3],self.tabs[self.tab][4])
+
+    def fwd_one_dir(self):
+        self.tabs[self.tab][4] += 1
+        if self.tabs[self.tab][4] > len(self.tabs[self.tab][3])-1:
+            self.tabs[self.tab][4] = len(self.tabs[self.tab][3])-1
+        else:
+            self.tabs[self.tab][0] = self.tabs[self.tab][3][self.tabs[self.tab][4]]
+            # del self.tabs[self.tab][3][self.tabs[self.tab][4]]
+        self.get_files(self.tabs[self.tab][0])
+        print(self.tabs[self.tab][3],self.tabs[self.tab][4])
+    
+    def up_one_dir(self):
+        _path = self.path[:self.path.rfind(self.path.split(f"{s}")[-1])-1]
         if _path != root[:-1]:
             self.get_files(_path)
         else:
@@ -353,14 +473,14 @@ class MainWindow(QMainWindow):
         if x != QMessageBox.StandardButton.Cancel:
             n, ok = QInputDialog.getText(self,"Create "+("Folder" if x == 3 else "File"),"Enter " + ("folder" if x == 3 else "file") + " name...")
             if n:
-                if not os.path.exists(tabs[tab][0]+n):
+                if not os.path.exists(self.tabs[self.tab][0]+n):
                     # print(x,_folder)
                     if x == 2:
-                        open(tabs[tab][0]+f"{s}"+n,"w").close()
+                        open(self.tabs[self.tab][0]+f"{s}"+n,"w").close()
                     elif x == 3:
-                        # # print(tabs[tab][0]+f"{s}"+n)
-                        os.mkdir(tabs[tab][0]+f"{s}"+n)
-                self.get_files(tabs[tab][0])
+                        # # print(self.tabs[self.tab][0]+f"{s}"+n)
+                        os.mkdir(self.tabs[self.tab][0]+f"{s}"+n)
+                self.get_files(self.tabs[self.tab][0])
 
 
     def search(self):
@@ -369,12 +489,12 @@ class MainWindow(QMainWindow):
         if query and query != "":
             def b():
                 nonlocal ls
-                if ssort == 1:
+                if self.ssort == 1:
                     ls.sort(key=lambda f: f.name)
-                elif ssort == 2:
+                elif self.ssort == 2:
                     ls.sort(key=lambda f: f.name,reverse=True)
-            if smode == 0:
-                for f in os.scandir(tabs[tab][0]):
+            if self.smode == 0:
+                for f in os.scandir(self.tabs[self.tab][0]):
                     vis = False
                     n = f.name.lower()
                     if n == query:
@@ -384,9 +504,9 @@ class MainWindow(QMainWindow):
                     if vis == True:
                         ls.append(f)
                 b()
-                self.get_files(tabs[tab][0],ls)
-            elif smode == 1:
-                for ds,_,_ in os.walk(tabs[tab][0]):
+                self.get_files(self.tabs[self.tab][0],ls)
+            elif self.smode == 1:
+                for ds,_,_ in os.walk(self.tabs[self.tab][0]):
                     d = "".join(ds)
                     for f in os.scandir(d):
                         if f.is_file():
@@ -399,8 +519,8 @@ class MainWindow(QMainWindow):
                             if vis == True:
                                 ls.append(f)
                 b()
-                self.get_files(tabs[tab][0],ls)
-            elif smode == 2:
+                self.get_files(self.tabs[self.tab][0],ls)
+            elif self.smode == 2:
                 def a():
                     nonlocal ls
                     for ds,_,_ in os.walk(f"{s}"):
@@ -418,58 +538,56 @@ class MainWindow(QMainWindow):
                                         ls.append(f)
                             except:pass
                     b()
-                    self.get_files(tabs[tab][0],ls)
+                    self.get_files(self.tabs[self.tab][0],ls)
                     self.working.setVisible(False)
                 self.working.setVisible(True)
                 QTimer.singleShot(100, a)
         else:
-            self.get_files(tabs[tab][0],[])
+            self.get_files(self.tabs[self.tab][0],[])
     
     def tog_hide(self):
         val = self.hide_tog.checkState().value == 2
-        for x in hfiles:
+        for x in self.hfiles:
             if val:
                 x.show()
             else:
                 x.hide()
 
     def to_tab(self,_tab):
-        global tab
-        # print(_tab,tabs[_tab][0])
-        tab = _tab
-        tabs[tab][1].setText(f"[Tab {list(tabs.keys()).index(tab)+1}]")
-        for i,y in tabs.items():
-            if i != tab:
-                y[1].setText(f"Tab {list(tabs.keys()).index(i)+1}")
-        self.get_files(tabs[tab][0])
+        # print(_tab,self.tabs[_tab][0])
+        self.tab = _tab
+        self.tabs[self.tab][1].setText(f"[{self.tabs[_tab][2]}]" if self.tabs[_tab][2] else f"[Tab {list(self.tabs.keys()).index(self.tab)+1}]")
+        for i,y in self.tabs.items():
+            if i != self.tab:
+                y[1].setText(y[2] if y[2] else f"Tab {list(self.tabs.keys()).index(i)+1}")
+        self.get_files(self.tabs[self.tab][0])
 
     def close_tab(self,_tab):
-        global tab, tabs
         # print(f"Close tab {_tab}")
-        if len(tabs.keys()) == 1: return
-        if tab == _tab:
-            tab = list(tabs.keys())[ list(tabs.keys()).index(tab) - 1 ]
-        self.tab_layout.removeWidget(tabs[_tab][1])
-        tabs[_tab][1].deleteLater()
-        del tabs[_tab]
-        self.to_tab(tab)
+        if len(self.tabs.keys()) == 1: return
+        if self.tab == _tab:
+            self.tab = list(self.tabs.keys())[ list(self.tabs.keys()).index(self.tab) - 1 ]
+        self.tab_layout.removeWidget(self.tabs[_tab][1])
+        self.tabs[_tab][1].deleteLater()
+        del self.tabs[_tab]
+        self.to_tab(self.tab)
 
     def add_tab(self,dir=None):
-        global tab, tabs
-        ntab = len(tabs.keys())
-        tab = gen_uid()
+        ntab = len(self.tabs.keys())
+        self.tab = gen_uid(self.ids)
+        self.ids.append(self.tab)
         tabB = QPushButton(f"Tab {ntab}")
-        tabB.clicked.connect(partial(self.to_tab,tab))
+        tabB.clicked.connect(partial(self.to_tab,self.tab))
         tabB.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        tabB.customContextMenuRequested.connect(partial(self.tab_context,tab))
-        tabs[tab] = [dir if dir else f"{home}{s}{user}",tabB]
+        tabB.customContextMenuRequested.connect(partial(self.tab_context,self.tab))
+        self.tabs[self.tab] = [dir if dir else f"{home}{s}{user}",tabB,False,[f"{home}{s}{user}"],0]
         self.tab_layout.addWidget(tabB)
-        self.to_tab(tab)
+        self.to_tab(self.tab)
 
     def pin_tab(self,_tab,force_pin=False):
         global pinned, pins
-        if _tab in tabs:
-            dir = tabs[_tab][0]
+        if _tab in self.tabs:
+            dir = self.tabs[_tab][0]
         else:
             dir = _tab
 
@@ -494,19 +612,17 @@ class MainWindow(QMainWindow):
 
     def search_context(self,position):
         def setSMode(val):
-            global smode
-            smode = val
+            self.smode = val
         def setSSort(val):
-            global ssort
-            ssort = val
+            self.ssort = val
 
         icon_check = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton)
         menu = QMenu()
         tog = menu.addAction("Toggle Search")
-        tog.triggered.connect(partial(self.tog_el,(self.search_inp,self.search_go)))
+        tog.triggered.connect(partial(self.tog_el,(self.search_inp,self.search_go),-1))
         if self.search_inp.isVisible():
            tog.setIcon(icon_check)
-        #smode
+
         _smode = menu.addMenu("Search Mode")
         sdir = _smode.addAction("Search Current Directory")
         sdir.triggered.connect(partial(setSMode,0))
@@ -514,7 +630,7 @@ class MainWindow(QMainWindow):
         srec.triggered.connect(partial(setSMode,1))
         sall = _smode.addAction("Search All Files")
         sall.triggered.connect(partial(setSMode,2))
-        #ssort
+
         _ssort = menu.addMenu("Sort Mode")
         sunsort = _ssort.addAction("Unsorted")
         sunsort.triggered.connect(partial(setSSort,0))
@@ -523,31 +639,41 @@ class MainWindow(QMainWindow):
         sralph = _ssort.addAction("Sort Reverse Alphabetically")
         sralph.triggered.connect(partial(setSSort,2))
         # upd icons
-        if smode == 0:
+        if self.smode == 0:
             sdir.setIcon(icon_check)
-        elif smode == 1:
+        elif self.smode == 1:
             srec.setIcon(icon_check)
-        elif smode == 2:
+        elif self.smode == 2:
             sall.setIcon(icon_check)
 
-        if ssort == 0:
+        if self.ssort == 0:
             sunsort.setIcon(icon_check)
-        elif ssort == 1:
+        elif self.ssort == 1:
             salph.setIcon(icon_check)
-        elif ssort == 2:
+        elif self.ssort == 2:
             sralph.setIcon(icon_check)
 
         #exec
         menu.exec(self.search_btn.mapToGlobal(position))
 
+    def rename_tab(self,_tab):
+        name, ok = QInputDialog.getText(self, "Rename Tab", "Enter name...")
+        if ok and name and name != "":
+            self.tabs[_tab][2] = name
+            if self.tabs[self.tab] == self.tabs[_tab]:
+                name = f"[{name}]"
+            self.tabs[_tab][1].setText(name)
+    
     def tab_context(self,_tab,position):
         # print(_tab,list(tabs.keys())[-1])
         menu = QMenu()
         close = menu.addAction("Close Tab")
         close.triggered.connect(partial(self.close_tab,_tab))
-        pin = menu.addAction("Pin Folder" if not tabs[_tab][0] in pinned else "Unpin Folder")
+        pin = menu.addAction("Pin Folder" if not self.tabs[_tab][0] in pinned else "Unpin Folder")
         pin.triggered.connect(partial(self.pin_tab,_tab))
-        menu.exec(tabs[_tab][1].mapToGlobal(position))
+        rename = menu.addAction("Rename Tab...")
+        rename.triggered.connect(partial(self.rename_tab,_tab))
+        menu.exec(self.tabs[_tab][1].mapToGlobal(position))
 
     def pin_context(self,dir,position):
         menu = QMenu()
@@ -565,7 +691,7 @@ class MainWindow(QMainWindow):
 
     def file_context(self,f:os.DirEntry,btn,position):
         menu = QMenu()
-        if tabs[tab][0] == f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files":
+        if self.tabs[self.tab][0] == trash:
             etrash = menu.addAction("Empty Trash")
             etrash.triggered.connect(partial(self.delete_file,"EMPTY_TRASH"))
         if f.is_dir():
@@ -574,14 +700,14 @@ class MainWindow(QMainWindow):
         else:
             opent = menu.addAction("Open File")
             opent.triggered.connect(partial(self.open_file,f))
-        if sys.platform == "linux":
-            openw = menu.addAction("Open with...")
-            openw.triggered.connect(partial(self.open_with,f))
+        # if sys.platform == "linux":
+        openw = menu.addAction("Open with...")
+        openw.triggered.connect(partial(self.open_with,f))
         rename = menu.addAction("Rename to...")
         rename.triggered.connect(partial(self.move_file,f,f"Rename {f.name} to..."))
-        if tabs[tab][0] != f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files":
-            trash = menu.addAction("Send to Trash")
-            trash.triggered.connect(partial(self.trash_file,f))
+        if self.tabs[self.tab][0] != trash:
+            _trash = menu.addAction("Send to Trash")
+            _trash.triggered.connect(partial(self.trash_file,f))
         move = menu.addAction("Move to...")
         move.triggered.connect(partial(self.move_file,f))
         copy = menu.addAction("Copy to...")
@@ -603,7 +729,7 @@ class MainWindow(QMainWindow):
     def trash_file(self,f:os.DirEntry):
         if os.path.exists(f):
             send2trash.send2trash(f.path)
-            self.get_files(tabs[tab][0])
+            self.get_files(self.tabs[self.tab][0])
     
     def delete_file(self,f:os.DirEntry):
         if type(f) != str and f != "EMPTY_TRASH":
@@ -626,14 +752,14 @@ class MainWindow(QMainWindow):
                         try:
                             os.rmdir(f)
                         except OSError as e:
-                            if e.errno == 39 and tabs[tab][0] == f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files":
+                            if e.errno == 39 and self.tabs[self.tab][0] == f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files":
                                 try:
                                     shutil.rmtree(f.path)
                                 except Exception as e:
                                     self.error_msg.showMessage(str(e))
                             else:
                                 self.error_msg.showMessage(str(e))
-                    self.get_files(tabs[tab][0])
+                    self.get_files(self.tabs[self.tab][0])
         else:
             msg = QMessageBox()
             msg.setWindowTitle("Empty Trash")
@@ -649,14 +775,14 @@ class MainWindow(QMainWindow):
                         os.remove(f)
                     else:
                         shutil.rmtree(f.path)
-                self.get_files(tabs[tab][0])
+                self.get_files(self.tabs[self.tab][0])
 
     def move_file(self,f:os.DirEntry,prompt=None):
         if not prompt:
             prompt = f"Move {f.name} from {f.path[:-len(f.name)]} to..."
         fp, ok = QInputDialog.getText(self, "Move " + "Folder" if f.is_dir() else "File", prompt)
         if fp[:2] == f".{s}":
-            fp = tabs[tab][0]+s+fp[2:]
+            fp = self.tabs[self.tab][0]+s+fp[2:]
         if fp[:2] == f"~{s}":
             fp = home+s+user+s+fp[2:]
         if ok and fp:
@@ -676,7 +802,7 @@ class MainWindow(QMainWindow):
                             shutil.move(f.path,f.path[:-(len(f.name))]+fn)
                         else:
                             shutil.move(f.path,fp+f"{s}"+f.name)
-                        self.get_files(tabs[tab][0])
+                        self.get_files(self.tabs[self.tab][0])
                     except Exception as e:
                         self.error_msg.showMessage(str(e))
                 else:
@@ -688,7 +814,7 @@ class MainWindow(QMainWindow):
         fp, ok = QInputDialog.getText(self, "Copy " + ("Folder" if f.is_dir() else "File"), f"Copy {f.name} to...")
         if fp == ".": fp = f".{s}"
         if fp[:2] == f".{s}":
-            fp = tabs[tab][0]+s+fp[2:]
+            fp = self.tabs[self.tab][0]+s+fp[2:]
         if fp[:2] == f"~{s}":
             fp = home+s+user+s+fp[2:]
         if ok and fp:
@@ -721,7 +847,7 @@ class MainWindow(QMainWindow):
                                 shutil.copyfile(f.path,fp+f"{s}"+name)
                             else:
                                 shutil.copytree(f.path,fp+f"{s}"+name)
-                        self.get_files(tabs[tab][0])
+                        self.get_files(self.tabs[self.tab][0])
                     except Exception as e:
                         self.error_msg.showMessage(str(e))
                 else:
