@@ -1,8 +1,11 @@
-from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QFrame, QScrollArea, QHBoxLayout, QLineEdit, QCheckBox, QMenu, QInputDialog, QErrorMessage, QMessageBox, QLabel, QStyle, QMenuBar
+from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QFrame, QScrollArea, QHBoxLayout, QLineEdit, QCheckBox, QMenu, QInputDialog, QErrorMessage, QMessageBox, QLabel, QStyle
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QAction
 from functools import partial
-import os, sys, shutil, subprocess, random, send2trash, json, screeninfo, webbrowser
+import os, sys, shutil, subprocess, random, send2trash, json, screeninfo, webbrowser, ctypes
+
+if sys.platform == "win32":
+    import win32com.client
 
 pinned = []
 pins = []
@@ -10,7 +13,7 @@ s = "/" if sys.platform != "win32" else "\\"
 home = f"{s}home" if sys.platform != "win32" else f"C:{s}Users"
 root = f"{s}" if sys.platform != "win32" else f"C:{s}"
 user = os.getlogin()
-trash = f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files" if sys.platform == "linux" else f"{root}$Recycle.Bin"
+trash = f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files" if sys.platform == "linux" else "trash" #f"{root}$Recycle.Bin"
 
 myEnv = dict(os.environ)
 lp_key = 'LD_LIBRARY_PATH'
@@ -31,7 +34,7 @@ if os.path.exists(program_path+f"{s}.Pyles{s}pins.json"):
     try:
         __pinned__ = []
         for x in json.load(file_pins):
-            if os.path.exists(x):
+            if os.path.exists(x) or x == "trash":
                 __pinned__.append(x)
         pinned = __pinned__
     except Exception as e:
@@ -50,6 +53,7 @@ def gen_uid(ids):
     return id
 
 def get_file_from_str(fp):
+    if fp == "trash": return "trash"
     if fp != "" and fp != root and (fp+s != root):
         if fp[-1] == f"{s}":
             fp = fp[:-1]
@@ -74,6 +78,16 @@ def open_file_with_default_program(file_path):
             subprocess.call(["xdg-open", file_path.path], env=myEnv)
     elif sys.platform == "win32":
         os.startfile(file_path)
+
+class _f:
+    def __init__(self, x):
+        self._x = x
+        self.name:str = x.Name
+        self.path:str = x.Path
+    def is_dir(self) -> bool:
+        return self._x.IsFolder
+    def is_file(self) -> bool:
+        return not self._x.IsFolder
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -337,6 +351,7 @@ class MainWindow(QMainWindow):
         self.open_file(f or t)
 
     def open_file(self, f):
+        print(f)
         if f:
             if type(f) != str:
                 if f.is_dir():
@@ -380,53 +395,96 @@ class MainWindow(QMainWindow):
         if _dir != self.tabs[self.tab][0] and not _dir in self.tabs[self.tab][3]:
             self.tabs[self.tab][3].insert(self.tabs[self.tab][4]+1,_dir)
             self.tabs[self.tab][4] += 1
-        self.path = _dir
-        self.setWindowTitle(f"Pyles | {self.path}")
-        self.tabs[self.tab][0] = self.path
-        _path = self.path[:self.path.rfind(self.path.split(f"{s}")[-1])-1]
-        _pathTxt = _path
-        if _path == "": _pathTxt = f"{root}"
-        self.up_dir.setText(("Up to " + _pathTxt) if (_pathTxt != self.path and self.path != root) else "__hide__")
-        if self.up_dir.text() == "__hide__":
-            self.up_dir.hide()
-        else:
-            self.up_dir.show()
-        # self.up_dir.setText(path + " >> " + (f"{s}" if _path == "" else _path))
-        self.input.setText(self.path)
-        if len(self.files) > 0:
-            for x in self.files:
-                self.scroll_layout.removeWidget(x)
-                x.deleteLater()
-        self.files = []
-        self.hfiles = []
-        if not fi:
-            try:
-                for f in os.scandir(_dir):
+        if not (sys.platform == "win32" and _dir == trash):
+            self.path = _dir
+            self.setWindowTitle(f"Pyles | {self.path}")
+            self.tabs[self.tab][0] = self.path
+            _path = self.path[:self.path.rfind(self.path.split(f"{s}")[-1])-1]
+            _pathTxt = _path
+            if _path == "": _pathTxt = f"{root}"
+            self.up_dir.setText(("Up to " + _pathTxt) if (_pathTxt != self.path and self.path != root) else "__hide__")
+            if self.up_dir.text() == "__hide__":
+                self.up_dir.hide()
+            else:
+                self.up_dir.show()
+            # self.up_dir.setText(path + " >> " + (f"{s}" if _path == "" else _path))
+            self.input.setText(self.path)
+            if len(self.files) > 0:
+                for x in self.files:
+                    self.scroll_layout.removeWidget(x)
+                    x.deleteLater()
+            self.files = []
+            self.hfiles = []
+            if not fi:
+                try:
+                    for f in os.scandir(_dir):
+                        fButton = QPushButton(f.name + (f"{s}" if f.is_dir() else ""))
+                        fButton.clicked.connect(partial(self.open_file, f))
+                        fButton.setStyleSheet("background-color: a();")
+                        fButton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                        fButton.customContextMenuRequested.connect(partial(self.file_context,f,fButton))
+                        self.scroll_layout.addWidget(fButton)
+                        if (f.name[0] == "." and sys.platform == "linux") or ((ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2) and sys.platform == "win32"):
+                            fButton.hide()
+                            self.hfiles.append(fButton)
+                        self.files.append(fButton)
+                except Exception as e:
+                    self.error_msg.showMessage(str(e))
+            else:
+                for f in fi:
                     fButton = QPushButton(f.name + (f"{s}" if f.is_dir() else ""))
                     fButton.clicked.connect(partial(self.open_file, f))
                     fButton.setStyleSheet("background-color: a();")
                     fButton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
                     fButton.customContextMenuRequested.connect(partial(self.file_context,f,fButton))
                     self.scroll_layout.addWidget(fButton)
-                    if f.name[0] == ".":
+                    if (f.name[0] == "." and sys.platform == "linux") or ((ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2) and sys.platform == "win32"):
                         fButton.hide()
                         self.hfiles.append(fButton)
                     self.files.append(fButton)
-            except Exception as e:
-                self.error_msg.showMessage(str(e))
         else:
-            for f in fi:
-                fButton = QPushButton(f.name + (f"{s}" if f.is_dir() else ""))
-                fButton.clicked.connect(partial(self.open_file, f))
-                fButton.setStyleSheet("background-color: a();")
-                fButton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-                fButton.customContextMenuRequested.connect(partial(self.file_context,f,fButton))
-                self.scroll_layout.addWidget(fButton)
-                if f.name[0] == ".":
-                    fButton.hide()
-                    self.hfiles.append(fButton)
-                self.files.append(fButton)
-        
+            shell = win32com.client.Dispatch("Shell.Application")
+            recycle_bin = shell.Namespace(10)
+            if recycle_bin:
+                self.setWindowTitle(f"Pyles | {trash}")
+                self.tabs[self.tab][0] = "trash"
+                self.up_dir.setText("__hide__")
+                self.up_dir.hide()
+                self.input.setText("Trash")
+                if len(self.files) > 0:
+                    for x in self.files:
+                        self.scroll_layout.removeWidget(x)
+                        x.deleteLater()
+                self.files = []
+                self.hfiles = []
+                if not fi:
+                    try:
+                        for x in recycle_bin.Items():
+                            f = _f(x)
+                            fButton = QPushButton(f.name + (f"{s}" if f.is_dir() else ""))
+                            fButton.clicked.connect(partial(self.open_file, f))
+                            fButton.setStyleSheet("background-color: a();")
+                            fButton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                            fButton.customContextMenuRequested.connect(partial(self.file_context,f,fButton))
+                            self.scroll_layout.addWidget(fButton)
+                            if (f.name[0] == "." and sys.platform == "linux") or ((ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2) and sys.platform == "win32"):
+                                fButton.hide()
+                                self.hfiles.append(fButton)
+                            self.files.append(fButton)
+                    except Exception as e:
+                        self.error_msg.showMessage(str(e))
+                else:
+                    for f in fi:
+                        fButton = QPushButton(f.name + (f"{s}" if f.is_dir() else ""))
+                        fButton.clicked.connect(partial(self.open_file, f))
+                        fButton.setStyleSheet("background-color: a();")
+                        fButton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                        fButton.customContextMenuRequested.connect(partial(self.file_context,f,fButton))
+                        self.scroll_layout.addWidget(fButton)
+                        if (f.name[0] == "." and sys.platform == "linux") or ((ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2) and sys.platform == "win32"):
+                            fButton.hide()
+                            self.hfiles.append(fButton)
+                        self.files.append(fButton)
         # Ensure layout updates are processed
         self.scroll_layout.update()
 
@@ -691,31 +749,34 @@ class MainWindow(QMainWindow):
 
     def file_context(self,f:os.DirEntry,btn,position):
         menu = QMenu()
+        print(self.tabs[self.tab][0])
         if self.tabs[self.tab][0] == trash:
             etrash = menu.addAction("Empty Trash")
             etrash.triggered.connect(partial(self.delete_file,"EMPTY_TRASH"))
-        if f.is_dir():
+        if f.is_dir() and not (self.tabs[self.tab][0] == trash and sys.platform == "win32"):
             opent = menu.addAction("Open in New Tab")
             opent.triggered.connect(partial(self.add_tab,f.path))
-        else:
+        elif not (self.tabs[self.tab][0] == trash and sys.platform == "win32"):
             opent = menu.addAction("Open File")
             opent.triggered.connect(partial(self.open_file,f))
-        # if sys.platform == "linux":
-        openw = menu.addAction("Open with...")
-        openw.triggered.connect(partial(self.open_with,f))
-        rename = menu.addAction("Rename to...")
-        rename.triggered.connect(partial(self.move_file,f,f"Rename {f.name} to..."))
+        if not (self.tabs[self.tab][0] == trash and sys.platform == "win32"):
+            openw = menu.addAction("Open with...")
+            openw.triggered.connect(partial(self.open_with,f))
+            rename = menu.addAction("Rename to...")
+            rename.triggered.connect(partial(self.move_file,f,f"Rename {f.name} to..."))
         if self.tabs[self.tab][0] != trash:
             _trash = menu.addAction("Send to Trash")
             _trash.triggered.connect(partial(self.trash_file,f))
-        move = menu.addAction("Move to...")
-        move.triggered.connect(partial(self.move_file,f))
-        copy = menu.addAction("Copy to...")
-        copy.triggered.connect(partial(self.copy_file,f))
+        if not (self.tabs[self.tab][0] == trash and sys.platform == "win32"):
+            move = menu.addAction("Move to...")
+            move.triggered.connect(partial(self.move_file,f))
+            copy = menu.addAction("Copy to...")
+            copy.triggered.connect(partial(self.copy_file,f))
         delete = menu.addAction("Delete")
         delete.triggered.connect(partial(self.delete_file,f))
-        pin = menu.addAction(("Pin" if not f.path in pinned else "Unpin") + " " + ("Folder" if f.is_dir() else "File"))
-        pin.triggered.connect(partial(self.pin_tab,f.path))
+        if not (self.tabs[self.tab][0] == trash and sys.platform == "win32"):
+            pin = menu.addAction(("Pin" if not f.path in pinned else "Unpin") + " " + ("Folder" if f.is_dir() else "File"))
+            pin.triggered.connect(partial(self.pin_tab,f.path))
         menu.exec(btn.mapToGlobal(position))
 
     def new_file_context(self,position):
@@ -727,7 +788,7 @@ class MainWindow(QMainWindow):
         menu.exec(self.new_file.mapToGlobal(position))
 
     def trash_file(self,f:os.DirEntry):
-        if os.path.exists(f):
+        if os.path.exists(f.path):
             send2trash.send2trash(f.path)
             self.get_files(self.tabs[self.tab][0])
     
@@ -742,10 +803,10 @@ class MainWindow(QMainWindow):
             msg.setDefaultButton(QMessageBox.StandardButton.No)
             x = msg.exec()
             if x == QMessageBox.StandardButton.Yes:
-                if os.path.exists(f):
+                if os.path.exists(f.path):
                     if f.is_file():
                         try:
-                            os.remove(f)
+                            os.remove(f.path)
                         except Exception as e:
                             self.error_msg.showMessage(str(e))
                     else:
@@ -770,11 +831,22 @@ class MainWindow(QMainWindow):
             msg.setDefaultButton(QMessageBox.StandardButton.No)
             x = msg.exec()
             if x == QMessageBox.StandardButton.Yes:
-                for f in os.scandir(f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files"):
-                    if f.is_file():
-                        os.remove(f)
-                    else:
-                        shutil.rmtree(f.path)
+                if sys.platform == "linux":
+                    for f in os.scandir(trash):
+                        if f.is_file():
+                            os.remove(f.path)
+                        else:
+                            shutil.rmtree(f.path)
+                else:
+                    shell = win32com.client.Dispatch("Shell.Application")
+                    recycle_bin = shell.Namespace(10)
+                    if recycle_bin:
+                        for x in recycle_bin.Items():
+                            f = _f(x)
+                            if f.is_file():
+                                os.remove(f.path)
+                            else:
+                                ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, 0x00000001 | 0x00000002 | 0x00000004)
                 self.get_files(self.tabs[self.tab][0])
 
     def move_file(self,f:os.DirEntry,prompt=None):
