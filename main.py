@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QFrame, QScrollArea, QHBoxLayout, QLineEdit, QCheckBox, QMenu, QInputDialog, QErrorMessage, QMessageBox, QLabel, QStyle
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont, QAction
+from PyQt6.QtGui import QFont, QAction, QIcon
 from functools import partial
 import os, sys, shutil, subprocess, random, send2trash, json, screeninfo, webbrowser, ctypes
 
@@ -77,7 +77,10 @@ def open_file_with_default_program(file_path):
         else:
             subprocess.call(["xdg-open", file_path.path], env=myEnv)
     elif sys.platform == "win32":
-        os.startfile(file_path)
+        try:
+            os.startfile(file_path)
+        except Exception as e:
+            return e
 
 class _f:
     def __init__(self, x):
@@ -232,6 +235,7 @@ class MainWindow(QMainWindow):
         self.error_msg = QErrorMessage(self)
 
         self.working = QLabel("Working...")
+        self.working.setWindowTitle("Pyles | Working...")
         self.working.setFixedWidth(225)
         self.working.setFixedHeight(75)
         self.working.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -351,13 +355,14 @@ class MainWindow(QMainWindow):
         self.open_file(f or t)
 
     def open_file(self, f):
-        print(f)
         if f:
             if type(f) != str:
                 if f.is_dir():
                     self.get_files(f.path)
                 else:
-                    open_file_with_default_program(f)
+                    e = open_file_with_default_program(f)
+                    if e:
+                        self.error_msg.showMessage(str(e))
             else:
                 if f.lower() != "trash":
                     self.get_files(root)
@@ -424,7 +429,7 @@ class MainWindow(QMainWindow):
                         fButton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
                         fButton.customContextMenuRequested.connect(partial(self.file_context,f,fButton))
                         self.scroll_layout.addWidget(fButton)
-                        if (f.name[0] == "." and sys.platform == "linux") or ((ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2) and sys.platform == "win32"):
+                        if (f.name[0] == "." and sys.platform == "linux") or (sys.platform == "win32" and (ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2)):
                             fButton.hide()
                             self.hfiles.append(fButton)
                         self.files.append(fButton)
@@ -438,7 +443,7 @@ class MainWindow(QMainWindow):
                     fButton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
                     fButton.customContextMenuRequested.connect(partial(self.file_context,f,fButton))
                     self.scroll_layout.addWidget(fButton)
-                    if (f.name[0] == "." and sys.platform == "linux") or ((ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2) and sys.platform == "win32"):
+                    if (f.name[0] == "." and sys.platform == "linux") or (sys.platform == "win32" and (ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2)):
                         fButton.hide()
                         self.hfiles.append(fButton)
                     self.files.append(fButton)
@@ -467,7 +472,7 @@ class MainWindow(QMainWindow):
                             fButton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
                             fButton.customContextMenuRequested.connect(partial(self.file_context,f,fButton))
                             self.scroll_layout.addWidget(fButton)
-                            if (f.name[0] == "." and sys.platform == "linux") or ((ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2) and sys.platform == "win32"):
+                            if (ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2):
                                 fButton.hide()
                                 self.hfiles.append(fButton)
                             self.files.append(fButton)
@@ -481,7 +486,7 @@ class MainWindow(QMainWindow):
                         fButton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
                         fButton.customContextMenuRequested.connect(partial(self.file_context,f,fButton))
                         self.scroll_layout.addWidget(fButton)
-                        if (f.name[0] == "." and sys.platform == "linux") or ((ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2) and sys.platform == "win32"):
+                        if (ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2):
                             fButton.hide()
                             self.hfiles.append(fButton)
                         self.files.append(fButton)
@@ -552,22 +557,22 @@ class MainWindow(QMainWindow):
                 elif self.ssort == 2:
                     ls.sort(key=lambda f: f.name,reverse=True)
             if self.smode == 0:
-                for f in os.scandir(self.tabs[self.tab][0]):
-                    vis = False
-                    n = f.name.lower()
-                    if n == query:
-                        vis = True
-                    elif n.find(query) != -1:
-                        vis = True
-                    if vis == True:
-                        ls.append(f)
-                b()
-                self.get_files(self.tabs[self.tab][0],ls)
-            elif self.smode == 1:
-                for ds,_,_ in os.walk(self.tabs[self.tab][0]):
-                    d = "".join(ds)
-                    for f in os.scandir(d):
-                        if f.is_file():
+                if not (sys.platform == "win32" and self.tabs[self.tab][0] == trash):
+                    for f in os.scandir(self.tabs[self.tab][0]):
+                        vis = False
+                        n = f.name.lower()
+                        if n == query:
+                            vis = True
+                        elif n.find(query) != -1:
+                            vis = True
+                        if vis == True:
+                            ls.append(f)
+                else:
+                    shell = win32com.client.Dispatch("Shell.Application")
+                    recycle_bin = shell.Namespace(10)
+                    if recycle_bin:
+                        for x in recycle_bin.Items():
+                            f = _f(x)
                             vis = False
                             n = f.name.lower()
                             if n == query:
@@ -578,6 +583,22 @@ class MainWindow(QMainWindow):
                                 ls.append(f)
                 b()
                 self.get_files(self.tabs[self.tab][0],ls)
+            elif self.smode == 1:
+                if not (sys.platform == "win32" and self.tabs[self.tab][0] == trash):
+                    for ds,_,_ in os.walk(self.tabs[self.tab][0]):
+                        d = "".join(ds)
+                        for f in os.scandir(d):
+                            if f.is_file():
+                                vis = False
+                                n = f.name.lower()
+                                if n == query:
+                                    vis = True
+                                elif n.find(query) != -1:
+                                    vis = True
+                                if vis == True:
+                                    ls.append(f)
+                    b()
+                    self.get_files(self.tabs[self.tab][0],ls)
             elif self.smode == 2:
                 def a():
                     nonlocal ls
@@ -680,12 +701,16 @@ class MainWindow(QMainWindow):
         tog.triggered.connect(partial(self.tog_el,(self.search_inp,self.search_go),-1))
         if self.search_inp.isVisible():
            tog.setIcon(icon_check)
+        
+        if sys.platform == "win32" and self.tabs[self.tab][0] == trash and self.smode == 1:
+            self.smode = 0
 
         _smode = menu.addMenu("Search Mode")
         sdir = _smode.addAction("Search Current Directory")
         sdir.triggered.connect(partial(setSMode,0))
-        srec = _smode.addAction("Search Current Directory Recursively")
-        srec.triggered.connect(partial(setSMode,1))
+        if not (sys.platform == "win32" and self.tabs[self.tab][0] == trash):
+            srec = _smode.addAction("Search Current Directory Recursively")
+            srec.triggered.connect(partial(setSMode,1))
         sall = _smode.addAction("Search All Files")
         sall.triggered.connect(partial(setSMode,2))
 
@@ -699,7 +724,7 @@ class MainWindow(QMainWindow):
         # upd icons
         if self.smode == 0:
             sdir.setIcon(icon_check)
-        elif self.smode == 1:
+        elif self.smode == 1 and not (sys.platform == "win32" and self.tabs[self.tab][0] == trash):
             srec.setIcon(icon_check)
         elif self.smode == 2:
             sall.setIcon(icon_check)
