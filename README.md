@@ -7,3 +7,9 @@ On linux, make sure to `chmod +x` Pyles!
 
 <br>**Note**:
 <br>I've recently tested on Linux Mint 22 and found that I can only open Pyles with a terminal window. A `.desktop` file has to launch with a terminal window too or else Pyles won't run!
+
+**For those using the source code...** | _If you just want to run the program ignore this!_
+<br>Here are the libraries you'll need to install:
+<br>• `pip3 install PyQt6`
+<br>• `pip3 install send2trash`
+<br>• `pip3 install pywin32` | _Only needed on Windows!_
