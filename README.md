@@ -15,6 +15,6 @@ On linux, make sure to `chmod +x` Pyles!
 <br>• `pip3 install screeninfo`
 <br>• `pip3 install pywin32` | _Only needed on Windows!_
 
-<br><br>Here are the build scripts I use:
+<br>Here are the build scripts I use:
 <br>• Windows: `pyinstaller --onefile --noconsole main.py`
 <br>• Linux: `pyinstaller --onefile main.py`
