@@ -12,4 +12,5 @@ On linux, make sure to `chmod +x` Pyles!
 <br>Here are the libraries you'll need to install:
 <br>• `pip3 install PyQt6`
 <br>• `pip3 install send2trash`
+<br>• `pip3 install screeninfo`
 <br>• `pip3 install pywin32` | _Only needed on Windows!_
