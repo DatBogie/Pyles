@@ -1,13 +1,16 @@
 from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QFrame, QScrollArea, QHBoxLayout, QLineEdit, QCheckBox, QMenu, QInputDialog, QErrorMessage, QMessageBox, QLabel, QStyle
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont, QAction, QIcon
+from PyQt6.QtGui import QFont, QAction
 from functools import partial
 import os, sys, shutil, subprocess, random, send2trash, json, screeninfo, webbrowser, ctypes
+
+__version__ = "1.0.7"
 
 if sys.platform == "win32":
     import win32com.client
 
 pinned = []
+pin_names = []
 pins = []
 s = "/" if sys.platform != "win32" else "\\"
 home = f"{s}home" if sys.platform != "win32" else f"C:{s}Users"
@@ -29,19 +32,45 @@ program_path = f"{home}{s}{user}"
 try:
     os.mkdir(program_path+f"{s}.Pyles")
 except:pass
+__old_pins__ = None
 if os.path.exists(program_path+f"{s}.Pyles{s}pins.json"):
-    file_pins = open(program_path+f"{s}.Pyles{s}pins.json","r")
+    with open(program_path+f"{s}.Pyles{s}pins.json","r") as _f:
+        f = json.load(_f)
+        __old_pins__ = f
+    send2trash.send2trash(program_path+f"{s}.Pyles{s}pins.json")
+if os.path.exists(program_path+f"{s}.Pyles{s}conf.json"):
+    config = open(program_path+f"{s}.Pyles{s}conf.json","r")
     try:
+        config_json = json.load(config)
         __pinned__ = []
-        for x in json.load(file_pins):
+        __pin_names__ = []
+        for x,n in config_json["pinned"].items():
             if os.path.exists(x) or x == "trash":
                 __pinned__.append(x)
+                __pin_names__.append(n)
         pinned = __pinned__
+        pin_names = __pin_names__
     except Exception as e:
         print(e)
 else:
-    file_pins = open(program_path+f"{s}.Pyles{s}pins.json","w")
-file_pins.close()
+    config = open(program_path+f"{s}.Pyles{s}conf.json","w")
+    config.write(r'{"pinned":{},"siz":null,"pos":null}')
+config.close()
+
+if __old_pins__ and (not pinned or pinned == []):
+    pinned = __old_pins__
+    for i in range(len(pinned)):
+        pin_names.append("")
+
+def save_conf(window):
+    _pinned = open(program_path+f"{s}.Pyles{s}conf.json","w")
+    __pinned__ = {}
+    for i,x in enumerate(pinned):
+        __pinned__[x] = pin_names[i]
+
+    data = {"pinned":__pinned__,"siz":[window.size().width(),window.size().height()],"pos":[window.pos().x(),window.pos().y()]}
+    json.dump(data,_pinned)
+    _pinned.close()
 
 def gen_uid(ids):
     id = ""
@@ -93,7 +122,21 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Pyles")
-        self.setGeometry(int(screeninfo.get_monitors()[0].width/2 - 400), int(screeninfo.get_monitors()[0].height/2 - 300), 800, 600)  # x, y, width, height
+        pos = [screeninfo.get_monitors()[0].width/2,screeninfo.get_monitors()[0].height/2]
+        siz = [800,600]
+        pos[0] -= siz[0]/2
+        pos[1] -= siz[1]/2
+        with open(program_path+f"{s}.Pyles{s}conf.json","r") as _f:
+            f = json.load(_f)
+            try:
+                if f["pos"]: pos = f["pos"]
+            except:pass
+            try:
+                if f["siz"]: siz = f["siz"]
+            except:pass
+        self.setGeometry(int(pos[0]), int(pos[1]), int(siz[0]), int(siz[1]))  # x, y, width, height
+
+        self.sfiles = []
 
         self.files = []
         self.hfiles = []
@@ -150,7 +193,7 @@ class MainWindow(QMainWindow):
 
         # Search Btn
         self.search_btn = QPushButton("Search")
-        self.search_btn.clicked.connect(partial(self.tog_el,(self.search_inp,self.search_go),-1))
+        self.search_btn.clicked.connect(self.tog_search)
         self.search_btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.search_btn.customContextMenuRequested.connect(self.search_context)
 
@@ -250,7 +293,7 @@ class MainWindow(QMainWindow):
         _about_font.setPointSize(20)
         about_title.setFont(_about_font)
 
-        about_body = QLabel('Version: 1.0.6-1<br>A simple file manager written in Python.<br>Gui made with Qt6 using PyQt6.<br>Made by Dat Bogie (<a href="https://github.com/DatBogie">GitHub</a>).')
+        about_body = QLabel(f'Version: {__version__} ({sys.platform})<br>A simple file manager written in Python.<br>Gui made with Qt6 using PyQt6.<br>Made by Dat Bogie (<a href="https://github.com/DatBogie">GitHub</a>).')
         about_body.setTextFormat(Qt.TextFormat.RichText)
         def _link_to(event):
             if event.button() == Qt.MouseButton.LeftButton:
@@ -301,10 +344,22 @@ class MainWindow(QMainWindow):
         menu_edit = QMenu("&Edit",self)
         menu_bar.addMenu(menu_edit)
 
+        refresh_action = QAction("&Refresh",self)
+        refresh_action.triggered.connect(self.refresh)
+        menu_edit.addAction(refresh_action)
+
         search_action = QAction("&Search",self)
-        menu_edit.addAction(search_action)
-        
         search_action.triggered.connect(self.show_search)
+        menu_edit.addAction(search_action)
+
+        if os.path.exists(f"{home}{s}{user}{s}.Pyles{s}conf.json"):
+            edit_conf = QAction("Open &Preferences",self)
+            edit_conf.triggered.connect(partial(self.open_file,get_file_from_str(f"{home}{s}{user}{s}.Pyles{s}conf.json")))
+            menu_edit.addAction(edit_conf)
+
+        save = QAction("S&ave Preferences",self)
+        save.triggered.connect(partial(save_conf,self))
+        menu_edit.addAction(save)
 
         menu_help = QMenu("&Help",self)
         menu_bar.addMenu(menu_help)
@@ -314,27 +369,27 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self.show_about)
 
         self.start()
-    
+
     def start(self):
         self.add_tab()
         self.get_files()
-        for x in pinned:
+        for i,x in enumerate(pinned):
             if not get_file_from_str(x): continue
-            self.pin_tab(x,True)
+            self.pin_tab(x,True,pin_names[i])
         self.search_inp.setVisible(False)
         self.search_go.setVisible(False)
-    
+
     def show_about(self):
         self.about_frame.setGeometry(int((self.pos().x() + (self.width()/2)) - 300), int((self.pos().y() + (self.height()/2)) - 200), 600, 400)
         self.tog_el((self.about_frame,),True)
-    
+
     def show_search(self):
         self.tog_el((self.search_inp,self.search_go),True)
         self.search_inp.setFocus(Qt.FocusReason.MouseFocusReason)
-    
+
     def new_window(self):
         MainWindow().show()
-    
+
     def tog_el(self,els:tuple,val=-1):
         for el in els:
             try:
@@ -343,7 +398,7 @@ class MainWindow(QMainWindow):
                 else:
                     el.setVisible(val)
             except:pass
-    
+
     def goto(self):
         t = self.input.text()
         t = t.replace("~",f"{home}{s}{user}")
@@ -387,7 +442,9 @@ class MainWindow(QMainWindow):
             subprocess.Popen(["openwith.exe",f.path],env=myEnv)
             # os.system(f'openwith.exe "{f.path}"')
 
-    def get_files(self,_dir=f"~",fi=None):
+    def get_files(self,_dir=f"~",fi=None,refresh:bool=False):
+        if not refresh: self.sfiles = []
+        if fi == []: fi = None
         if _dir == "~":
             _dir = f"{home}{s}{user}"
         if _dir.lower() == "trash":
@@ -415,7 +472,7 @@ class MainWindow(QMainWindow):
                     x.deleteLater()
             self.files = []
             self.hfiles = []
-            if not fi:
+            if not fi and self.sfiles == []:
                 try:
                     for f in os.scandir(_dir):
                         fButton = QPushButton(f.name + (f"{s}" if f.is_dir() else ""))
@@ -423,6 +480,7 @@ class MainWindow(QMainWindow):
                         fButton.setStyleSheet("background-color: a();")
                         fButton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
                         fButton.customContextMenuRequested.connect(partial(self.file_context,f,fButton))
+                        fButton.setToolTip(f.path)
                         self.scroll_layout.addWidget(fButton)
                         if (f.name[0] == "." and sys.platform == "linux") or (sys.platform == "win32" and (ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2)):
                             fButton.hide()
@@ -431,17 +489,26 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     self.error_msg.showMessage(str(e))
             else:
+                if not fi:
+                    fi = self.sfiles
+                else:
+                    self.sfiles = fi
+                _exists = 0
                 for f in fi:
-                    fButton = QPushButton(f.name + (f"{s}" if f.is_dir() else ""))
-                    fButton.clicked.connect(partial(self.open_file, f))
-                    fButton.setStyleSheet("background-color: a();")
-                    fButton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-                    fButton.customContextMenuRequested.connect(partial(self.file_context,f,fButton))
-                    self.scroll_layout.addWidget(fButton)
-                    if (f.name[0] == "." and sys.platform == "linux") or (sys.platform == "win32" and (ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2)):
-                        fButton.hide()
-                        self.hfiles.append(fButton)
-                    self.files.append(fButton)
+                    if os.path.exists(f.path):
+                        fButton = QPushButton(f.name + (f"{s}" if f.is_dir() else ""))
+                        fButton.clicked.connect(partial(self.open_file, f))
+                        fButton.setStyleSheet("background-color: a();")
+                        fButton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                        fButton.customContextMenuRequested.connect(partial(self.file_context,f,fButton))
+                        fButton.setToolTip(f.path)
+                        self.scroll_layout.addWidget(fButton)
+                        if (f.name[0] == "." and sys.platform == "linux") or (sys.platform == "win32" and (ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2)):
+                            fButton.hide()
+                            self.hfiles.append(fButton)
+                        self.files.append(fButton)
+                    else: _exists += 1
+                if _exists == len(fi): self.get_files(self.tabs[self.tab][0]);return
         else:
             shell = win32com.client.Dispatch("Shell.Application")
             recycle_bin = shell.Namespace(10)
@@ -457,7 +524,7 @@ class MainWindow(QMainWindow):
                         x.deleteLater()
                 self.files = []
                 self.hfiles = []
-                if not fi:
+                if not fi and self.sfiles == []:
                     try:
                         for x in recycle_bin.Items():
                             f = _f(x)
@@ -466,6 +533,7 @@ class MainWindow(QMainWindow):
                             fButton.setStyleSheet("background-color: a();")
                             fButton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
                             fButton.customContextMenuRequested.connect(partial(self.file_context,f,fButton))
+                            fButton.setToolTip(f.path)
                             self.scroll_layout.addWidget(fButton)
                             if (ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2) and sys.platform == "win32":
                                 fButton.hide()
@@ -474,12 +542,17 @@ class MainWindow(QMainWindow):
                     except Exception as e:
                         self.error_msg.showMessage(str(e))
                 else:
+                    if not fi:
+                        fi = self.sfiles
+                    else:
+                        self.sfiles = fi
                     for f in fi:
                         fButton = QPushButton(f.name + (f"{s}" if f.is_dir() else ""))
                         fButton.clicked.connect(partial(self.open_file, f))
                         fButton.setStyleSheet("background-color: a();")
                         fButton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
                         fButton.customContextMenuRequested.connect(partial(self.file_context,f,fButton))
+                        fButton.setToolTip(f.path)
                         self.scroll_layout.addWidget(fButton)
                         if (ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2) and sys.platform == "win32":
                             fButton.hide()
@@ -487,6 +560,9 @@ class MainWindow(QMainWindow):
                         self.files.append(fButton)
         # Ensure layout updates are processed
         self.scroll_layout.update()
+
+    def refresh(self):
+        self.get_files(self.tabs[self.tab][0],None,True)
 
     def back_one_dir(self):
         self.tabs[self.tab][4] -= 1
@@ -507,7 +583,7 @@ class MainWindow(QMainWindow):
             # del self.tabs[self.tab][3][self.tabs[self.tab][4]]
         self.get_files(self.tabs[self.tab][0])
         print(self.tabs[self.tab][3],self.tabs[self.tab][4])
-    
+
     def up_one_dir(self):
         _path = self.path[:self.path.rfind(self.path.split(f"{s}")[-1])-1]
         if _path != root[:-1]:
@@ -538,7 +614,7 @@ class MainWindow(QMainWindow):
                     elif x == 3:
                         # # print(self.tabs[self.tab][0]+f"{s}"+n)
                         os.mkdir(self.tabs[self.tab][0]+f"{s}"+n)
-                self.get_files(self.tabs[self.tab][0])
+                self.refresh()
 
 
     def search(self):
@@ -564,20 +640,25 @@ class MainWindow(QMainWindow):
                 b()
                 self.get_files(self.tabs[self.tab][0],ls)
             elif self.smode == 1:
-                for ds,_,_ in os.walk(self.tabs[self.tab][0]):
-                    d = "".join(ds)
-                    for f in os.scandir(d):
-                        if f.is_file():
-                            vis = False
-                            n = f.name.lower()
-                            if n == query:
-                                vis = True
-                            elif n.find(query) != -1:
-                                vis = True
-                            if vis == True:
-                                ls.append(f)
-                b()
-                self.get_files(self.tabs[self.tab][0],ls)
+                def a():
+                    nonlocal ls
+                    for ds,_,_ in os.walk(self.tabs[self.tab][0]):
+                        d = "".join(ds)
+                        for f in os.scandir(d):
+                            if f.is_file():
+                                vis = False
+                                n = f.name.lower()
+                                if n == query:
+                                    vis = True
+                                elif n.find(query) != -1:
+                                    vis = True
+                                if vis == True:
+                                    ls.append(f)
+                    b()
+                    self.get_files(self.tabs[self.tab][0],ls)
+                    self.working.setVisible(False)
+                self.working.setVisible(True)
+                QTimer.singleShot(100,a)
             elif self.smode == 2:
                 def a():
                     nonlocal ls
@@ -601,8 +682,9 @@ class MainWindow(QMainWindow):
                 self.working.setVisible(True)
                 QTimer.singleShot(100, a)
         else:
+            self.sfiles = []
             self.get_files(self.tabs[self.tab][0],[])
-    
+
     def tog_hide(self):
         val = self.hide_tog.checkState().value == 2
         for x in self.hfiles:
@@ -642,8 +724,8 @@ class MainWindow(QMainWindow):
         self.tab_layout.addWidget(tabB)
         self.to_tab(self.tab)
 
-    def pin_tab(self,_tab,force_pin=False):
-        global pinned, pins
+    def pin_tab(self,_tab,force_pin=False,name:str=""):
+        global pinned, pins, pin_names
         if _tab in self.tabs:
             dir = self.tabs[_tab][0]
         else:
@@ -652,21 +734,33 @@ class MainWindow(QMainWindow):
         if force_pin or not dir in pinned:
             if not dir in pinned:
                 pinned.append(dir)
-            n = dir
-            if n[-1] == f"{s}":
-                n = n[:-1]
-            n = n[n.rfind(f"{s}")+1:]
+                pin_names.append(name)
+            n = ""
+            if name == "":
+                n = dir
+                if n[-1] == f"{s}":
+                    n = n[:-1]
+                n = n[n.rfind(f"{s}")+1:]
+            else:
+                n = name
             pinB = QPushButton(n)
             pinB.clicked.connect(partial(self.open_file,get_file_from_str(dir)))
             pinB.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             pinB.customContextMenuRequested.connect(partial(self.pin_context,dir))
+            pinB.setToolTip(dir)
             self.pins_layout.addWidget(pinB)
             pins.append(pinB)
         elif dir in pinned:
             self.pins_layout.removeWidget(pins[pinned.index(dir)])
             pins[pinned.index(dir)].deleteLater()
             del pins[pinned.index(dir)]
+            del pin_names[pinned.index(dir)]
             del pinned[pinned.index(dir)]
+
+    def tog_search(self):
+        if self.search_inp.isVisible():
+            self.sfiles = []
+        self.tog_el((self.search_inp,self.search_go),-1)
 
     def search_context(self,position):
         def setSMode(val):
@@ -677,7 +771,7 @@ class MainWindow(QMainWindow):
         icon_check = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton)
         menu = QMenu()
         tog = menu.addAction("Toggle Search")
-        tog.triggered.connect(partial(self.tog_el,(self.search_inp,self.search_go),-1))
+        tog.triggered.connect(self.tog_search)
         if self.search_inp.isVisible():
            tog.setIcon(icon_check)
 
@@ -721,7 +815,15 @@ class MainWindow(QMainWindow):
             if self.tabs[self.tab] == self.tabs[_tab]:
                 name = f"[{name}]"
             self.tabs[_tab][1].setText(name)
-    
+
+    def rename_pin(self,dir:str):
+        global pin_names
+        name, ok = QInputDialog.getText(self, "Rename Pin", "Enter name...")
+        if ok and name and name != "":
+            i = pinned.index(dir)
+            pin_names[i] = name
+            pins[i].setText(name)
+
     def tab_context(self,_tab,position):
         # print(_tab,list(tabs.keys())[-1])
         menu = QMenu()
@@ -736,12 +838,14 @@ class MainWindow(QMainWindow):
     def pin_context(self,dir,position):
         menu = QMenu()
         if not get_file_from_str(dir): return
-        if get_file_from_str(dir).is_dir():
+        if dir == "trash" or get_file_from_str(dir).is_dir():
             otab = menu.addAction("Open in new tab")
             otab.triggered.connect(partial(self.add_tab,dir))
         else:
             ofile = menu.addAction("Open file")
             ofile.triggered.connect(partial(self.open_file,get_file_from_str(dir)))
+        rename = menu.addAction("Rename pin...")
+        rename.triggered.connect(partial(self.rename_pin,dir))
         unpin = menu.addAction("Unpin")
         unpin.triggered.connect(partial(self.pin_tab,dir))
         if dir in pinned:
@@ -790,8 +894,8 @@ class MainWindow(QMainWindow):
     def trash_file(self,f:os.DirEntry):
         if os.path.exists(f.path):
             send2trash.send2trash(f.path)
-            self.get_files(self.tabs[self.tab][0])
-    
+            self.refresh()
+
     def delete_file(self,f:os.DirEntry):
         if type(f) != str and f != "EMPTY_TRASH":
             msg = QMessageBox()
@@ -813,14 +917,14 @@ class MainWindow(QMainWindow):
                         try:
                             os.rmdir(f)
                         except OSError as e:
-                            if e.errno == 39 and self.tabs[self.tab][0] == f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files":
+                            if e.errno == 39: #and self.tabs[self.tab][0] == f"{home}{s}{user}{s}.local{s}share{s}Trash{s}files":
                                 try:
                                     shutil.rmtree(f.path)
                                 except Exception as e:
                                     self.error_msg.showMessage(str(e))
                             else:
                                 self.error_msg.showMessage(str(e))
-                    self.get_files(self.tabs[self.tab][0])
+                    self.refresh()
         else:
             msg = QMessageBox()
             msg.setWindowTitle("Empty Trash")
@@ -847,7 +951,7 @@ class MainWindow(QMainWindow):
                                 os.remove(f.path)
                             else:
                                 ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, 0x00000001 | 0x00000002 | 0x00000004)
-                self.get_files(self.tabs[self.tab][0])
+                self.refresh()
 
     def move_file(self,f:os.DirEntry,prompt=None):
         if not prompt:
@@ -874,7 +978,7 @@ class MainWindow(QMainWindow):
                             shutil.move(f.path,f.path[:-(len(f.name))]+fn)
                         else:
                             shutil.move(f.path,fp+f"{s}"+f.name)
-                        self.get_files(self.tabs[self.tab][0])
+                        self.refresh()
                     except Exception as e:
                         self.error_msg.showMessage(str(e))
                 else:
@@ -919,7 +1023,7 @@ class MainWindow(QMainWindow):
                                 shutil.copyfile(f.path,fp+f"{s}"+name)
                             else:
                                 shutil.copytree(f.path,fp+f"{s}"+name)
-                        self.get_files(self.tabs[self.tab][0])
+                        self.refresh()
                     except Exception as e:
                         self.error_msg.showMessage(str(e))
                 else:
@@ -936,6 +1040,4 @@ if __name__ == "__main__":
     window = MainWindow()
     window.show()
     app.exec()
-    _pinned = open(program_path+f"{s}.Pyles{s}pins.json","w")
-    json.dump(pinned,_pinned)
-    _pinned.close()
+    save_conf(window)
