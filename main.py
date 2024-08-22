@@ -2,9 +2,9 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout,
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QAction
 from functools import partial
-import os, sys, shutil, subprocess, random, send2trash, json, screeninfo, webbrowser, ctypes
+import os, sys, shutil, subprocess, random, send2trash, json, screeninfo, webbrowser, ctypes, zipfile, tarfile, py7zr
 
-__version__ = "1.0.7"
+__version__ = "1.0.8-b"
 
 if sys.platform == "win32":
     import win32com.client
@@ -62,6 +62,9 @@ if __old_pins__ and (not pinned or pinned == []):
     for i in range(len(pinned)):
         pin_names.append("")
 
+def sep_path(x:str,o:str):
+    return x[len(o)+1:]
+
 def save_conf(window):
     _pinned = open(program_path+f"{s}.Pyles{s}conf.json","w")
     __pinned__ = {}
@@ -117,6 +120,15 @@ class _f:
         return self._x.IsFolder
     def is_file(self) -> bool:
         return not self._x.IsFolder
+
+def betterWalk(path:str):
+    r = []
+    for ds,_,_ in os.walk(path):
+        d = "".join(ds)
+        for f in os.scandir(d):
+            if f.is_file():
+                r.append(f)
+    return tuple(r)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -838,7 +850,10 @@ class MainWindow(QMainWindow):
     def pin_context(self,dir,position):
         menu = QMenu()
         if not get_file_from_str(dir): return
-        if dir == "trash" or get_file_from_str(dir).is_dir():
+        if dir == trash:
+            etrash = menu.addAction("Empty trash")
+            etrash.triggered.connect(partial(self.delete_file,"EMPTY_TRASH"))
+        if dir == trash or get_file_from_str(dir).is_dir():
             otab = menu.addAction("Open in new tab")
             otab.triggered.connect(partial(self.add_tab,dir))
         else:
@@ -876,6 +891,13 @@ class MainWindow(QMainWindow):
             move.triggered.connect(partial(self.move_file,f))
             copy = menu.addAction("Copy to...")
             copy.triggered.connect(partial(self.copy_file,f))
+        compress = menu.addAction("Compress to...")
+        if f.is_file():
+            compress.triggered.connect(partial(self.make_archive,f))
+        else:
+            files = betterWalk(f.path)
+            compress.triggered.connect(partial(self.make_archive,files))
+        
         delete = menu.addAction("Delete")
         delete.triggered.connect(partial(self.delete_file,f))
         if not (self.tabs[self.tab][0] == trash and sys.platform == "win32"):
@@ -891,6 +913,61 @@ class MainWindow(QMainWindow):
         nfolder.triggered.connect(partial(self.add_file,3))
         menu.exec(self.new_file.mapToGlobal(position))
 
+    def make_archive(self,files:os.DirEntry|tuple[os.DirEntry,...]):
+        archive_types = [
+            (py7zr.SevenZipFile,"7z",""),
+            (tarfile.open,"tar",""),
+            (tarfile.open,"tar.bz2",":bz2"),
+            (tarfile.open,"tar.gz",":gz"),
+            (tarfile.open,"tar.xz",":xz"),
+            (zipfile.ZipFile,"zip","")
+        ]
+        ty = QMessageBox()
+        ty.setWindowTitle("Compress File")
+        ty.setText("What type of compression would you like to use?")
+        ty.setIcon(QMessageBox.Icon.Question)
+        ty.addButton("7Zip", QMessageBox.ButtonRole.ActionRole) # 2
+        ty.addButton("Tar (uncompressed)", QMessageBox.ButtonRole.ActionRole) # 3
+        ty.addButton("Tar BZip2 (bz2)", QMessageBox.ButtonRole.ActionRole) # 4
+        ty.addButton("Tar GZip (gz)", QMessageBox.ButtonRole.ActionRole) # 5
+        ty.addButton("Tar LZMA (xz)", QMessageBox.ButtonRole.ActionRole) # 6
+        ty.addButton("Zip", QMessageBox.ButtonRole.ActionRole) # 7
+        ty.setStandardButtons(QMessageBox.StandardButton.Cancel)
+        ty.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        x = ty.exec()
+        if x == QMessageBox.StandardButton.Cancel: return
+        name, ok = QInputDialog.getText(self, "Compress File", "Archive Name (w/o file extension)")
+        if not ok or not name or name == "": return
+        try:
+            _arch = archive_types[x-2]
+            name = f"{self.tabs[self.tab][0]}{s}{name}.{_arch[1]}"
+            if os.path.exists(name): raise FileExistsError(f"File already exists: {name}")
+            def __add_file__(archive,x,file:os.DirEntry):
+                if x-2 != 0 and x-2 != 5:
+                    archive.add(file.path,arcname=sep_path(file.path,self.tabs[self.tab][0]))
+                else:
+                    archive.write(file.path,arcname=sep_path(file.path,self.tabs[self.tab][0]))
+            archive = None
+            if x-2 != 0:
+                archive = _arch[0](name,"w"+_arch[2])
+            else:
+                password, ok = QInputDialog.getText(self, "Compress File", "Archive Password")
+                if not ok: password = ""
+                if password != "":
+                    archive = _arch[0](name,"w"+_arch[2],password=password)
+                else:
+                    archive = _arch[0](name,"w"+_arch[2])
+            if not archive: return
+            if type(files) == os.DirEntry:
+                __add_file__(archive,x,files)
+            else:
+                for f in files:
+                    __add_file__(archive,x,f)
+            archive.close()
+            self.refresh()
+        except Exception as e:
+            self.error_msg.showMessage(str(e))
+    
     def trash_file(self,f:os.DirEntry):
         if os.path.exists(f.path):
             send2trash.send2trash(f.path)
