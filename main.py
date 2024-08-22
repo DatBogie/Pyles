@@ -72,11 +72,11 @@ def is_archive(x:str,d:bool=False):
 
 def get_tar_type(_dir:str):
     with open(_dir,"rb") as f:
-        sig = f.read()
+        sig = f.read(6)
         if sig.startswith(b"\x1f\x8b"):
             return "gz"
         elif sig.startswith(b"BZ"):
-            return "bz"
+            return "bz2"
         elif sig.startswith(b"\xfd7zXZ"):
             return "xz"
         else:
@@ -361,7 +361,6 @@ class MainWindow(QMainWindow):
         new_menu_file.triggered.connect(partial(self.add_file,2))
         new_menu_folder.triggered.connect(partial(self.add_file,3))
 
-        menu_file.addSeparator()
 
         new_window_action = QAction("New &Window",self)
         menu_file.addAction(new_window_action)
@@ -370,9 +369,14 @@ class MainWindow(QMainWindow):
 
         menu_file.addSeparator()
 
+        cleanup_action = QAction("&Cleanup Temp Files",self)
+        cleanup_action.triggered.connect(self.cleanup_temp)
+        menu_file.addAction(cleanup_action)
+
+        menu_file.addSeparator()
+
         exit_action = QAction("E&xit",self)
         menu_file.addAction(exit_action)
-
         exit_action.triggered.connect(self.close)
 
         menu_edit = QMenu("&Edit",self)
@@ -413,6 +417,11 @@ class MainWindow(QMainWindow):
         self.search_inp.setVisible(False)
         self.search_go.setVisible(False)
 
+    def cleanup_temp(self):
+        for x in self.tempdirs.values():
+            x.cleanup()
+        self.tempdirs = {}
+    
     def fix_history(self):
         new = []
         for i,x in enumerate(self.tabs[self.tab][3]):
@@ -496,7 +505,7 @@ class MainWindow(QMainWindow):
             _dir = f"{home}{s}{user}"
         if _dir.lower() == "trash":
            _dir = trash
-        if not os.path.exists(_dir):
+        if _dir != trash and not os.path.exists(_dir):
             self.error_msg.showMessage(f"Path {_dir} does not exist.")
             return
         if save:
@@ -527,7 +536,7 @@ class MainWindow(QMainWindow):
                 is_7z = False
                 is_tar = False
                 is_zip = False
-                if get_file_from_str(_dir).is_file():
+                if type(get_file_from_str(_dir)) != str and get_file_from_str(_dir).is_file():
                     is_7z = py7zr.is_7zfile(_dir)
                     is_tar = tarfile.is_tarfile(_dir)
                     is_zip = zipfile.is_zipfile(_dir)
@@ -559,9 +568,16 @@ class MainWindow(QMainWindow):
                             password = None
                             if req_pass:
                                 password, ok = QInputDialog.getText(self, "Compress File", "Archive Password")
-                                if not ok or password == "": password = None
-                            with py7zr.SevenZipFile(_dir,"r",password=password) as archive:
-                                archive.extractall(path=pathlib.Path(tmpdir.name))
+                                if not ok: self.back_one_dir(); tmpdir.cleanup(); del self.tempdirs[_dir]; return
+                                if password == "": password = None
+                            try:
+                                with py7zr.SevenZipFile(_dir,"r",password=password) as archive:
+                                    archive.extractall(path=pathlib.Path(tmpdir.name))
+                            except Exception as e:
+                                self.error_msg.showMessage(str(e))
+                                tmpdir.cleanup()
+                                del self.tempdirs[_dir]
+                                return
                             self.get_files(tmpdir.name,save=False)
                         else:
                             tmpdir = self.tempdirs[_dir]
@@ -572,7 +588,7 @@ class MainWindow(QMainWindow):
                             tmpdir = tempfile.TemporaryDirectory()
                             self.tempdirs[_dir] = tmpdir
                             ty = get_tar_type(_dir)
-                            with tarfile.TarFile(_dir,"r:"+ty) as archive:
+                            with tarfile.open(_dir,"r:"+ty) as archive:
                                 archive.extractall(tmpdir.name)
                             self.get_files(tmpdir.name)
                         else:
@@ -1134,6 +1150,7 @@ class MainWindow(QMainWindow):
     def trash_file(self,f:os.DirEntry):
         if f.path in self.tempdirs.keys():
             self.tempdirs[f.path].cleanup()
+            del self.tempdirs[f.path]
         if os.path.exists(f.path):
             send2trash.send2trash(f.path)
             self.refresh()
@@ -1151,6 +1168,7 @@ class MainWindow(QMainWindow):
             if x == QMessageBox.StandardButton.Yes:
                 if f.path in self.tempdirs.keys():
                     self.tempdirs[f.path].cleanup()
+                    del self.tempdirs[f.path]
                 if os.path.exists(f.path):
                     if f.is_file():
                         try:
@@ -1285,5 +1303,4 @@ if __name__ == "__main__":
     window.show()
     app.exec()
     save_conf(window)
-    for x in window.tempdirs.values():
-        x.cleanup()
+    window.cleanup_temp()
