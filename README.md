@@ -14,6 +14,7 @@ On linux, make sure to `chmod +x` Pyles!
 <br>• `pip3 install send2trash`
 <br>• `pip3 install screeninfo`
 <br>• `pip3 install pywin32` | _Only needed on Windows!_
+<br>• `pip3 install py7zr`
 
 Here are the build scripts I use:
 <br>• Linux: `pyinstaller --onefile main.py`
