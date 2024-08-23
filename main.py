@@ -396,7 +396,7 @@ class MainWindow(QMainWindow):
             menu_edit.addAction(edit_conf)
 
         save = QAction("S&ave Preferences",self)
-        save.triggered.connect(partial(save_conf,self))
+        save.triggered.connect(self.save_conf)
         menu_edit.addAction(save)
 
         menu_help = QMenu("&Help",self)
@@ -412,11 +412,18 @@ class MainWindow(QMainWindow):
         self.add_tab()
         self.get_files()
         for i,x in enumerate(pinned):
-            if not get_file_from_str(x): continue
+            if not os.path.exists(x) and x != trash: continue
             self.pin_tab(x,True,pin_names[i])
         self.search_inp.setVisible(False)
         self.search_go.setVisible(False)
 
+    def save_conf(self):
+        try:
+            save_conf(self)
+            QMessageBox.information(self,"Save Preferences","Preferences Saved!",QMessageBox.StandardButton.Ok)
+        except Exception as e:
+            self.error_msg.showMessage(str(e))
+    
     def cleanup_temp(self):
         for x in self.tempdirs.values():
             x.cleanup()
@@ -465,12 +472,12 @@ class MainWindow(QMainWindow):
     def open_file(self, f):
         if f:
             if type(f) != str:
-                if f.is_dir() or py7zr.is_7zfile(f.path) or tarfile.is_tarfile(f.path) or zipfile.is_zipfile(f.path):
+                if f.is_dir() or is_archive(f.path):
                     self.get_files(f.path)
                 else:
                     open_file_with_default_program(f)
             else:
-                if f.lower() != "trash":
+                if f.lower() != "trash" and not os.path.exists(f):
                     self.get_files(root)
                 else:
                     self.get_files(f)
@@ -508,6 +515,7 @@ class MainWindow(QMainWindow):
         if _dir != trash and not os.path.exists(_dir):
             self.error_msg.showMessage(f"Path {_dir} does not exist.")
             return
+        print(_dir)
         if save:
             if _dir != self.tabs[self.tab][0] and not _dir in self.tabs[self.tab][3]:
                 self.tabs[self.tab][3].insert(self.tabs[self.tab][4]+1,_dir)
@@ -536,7 +544,7 @@ class MainWindow(QMainWindow):
                 is_7z = False
                 is_tar = False
                 is_zip = False
-                if type(get_file_from_str(_dir)) != str and get_file_from_str(_dir).is_file():
+                if get_file_from_str(_dir) and type(get_file_from_str(_dir)) != str and get_file_from_str(_dir).is_file():
                     is_7z = py7zr.is_7zfile(_dir)
                     is_tar = tarfile.is_tarfile(_dir)
                     is_zip = zipfile.is_zipfile(_dir)
@@ -930,7 +938,7 @@ class MainWindow(QMainWindow):
             else:
                 n = name
             pinB = QPushButton(n)
-            pinB.clicked.connect(partial(self.open_file,get_file_from_str(dir)))
+            pinB.clicked.connect(partial(self.open_file,get_file_from_str(dir) if get_file_from_str(dir) else dir))
             pinB.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             pinB.customContextMenuRequested.connect(partial(self.pin_context,dir))
             pinB.setToolTip(dir)
@@ -1023,11 +1031,13 @@ class MainWindow(QMainWindow):
 
     def pin_context(self,dir,position):
         menu = QMenu()
-        if not get_file_from_str(dir): return
+        _root = False
+        if not os.path.exists(dir): return
+        if not get_file_from_str(dir): _root = True
         if dir == trash:
             etrash = menu.addAction("Empty trash")
             etrash.triggered.connect(partial(self.delete_file,"EMPTY_TRASH"))
-        if dir == trash or get_file_from_str(dir).is_dir():
+        if dir == trash or (_root or get_file_from_str(dir).is_dir()):
             otab = menu.addAction("Open in new tab")
             otab.triggered.connect(partial(self.add_tab,dir))
         else:
