@@ -1,11 +1,12 @@
-from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QFrame, QScrollArea, QHBoxLayout, QLineEdit, QCheckBox, QMenu, QInputDialog, QErrorMessage, QMessageBox, QLabel, QStyle
+from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QFrame, QScrollArea, QHBoxLayout, QLineEdit, QCheckBox, QMenu, QInputDialog, QErrorMessage, QMessageBox, QLabel, QStyle, QProgressBar
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QAction
 from functools import partial
+import py7zr.callbacks
 import py7zr.py7zr
 import os, sys, shutil, subprocess, random, send2trash, json, screeninfo, webbrowser, ctypes, zipfile, tarfile, py7zr, tempfile, pathlib
 
-__version__ = "1.0.8pre-1"
+__version__ = "1.0.8pre-2"
 
 if sys.platform == "win32":
     import win32com.client
@@ -62,6 +63,15 @@ if __old_pins__ and (not pinned or pinned == []):
     pinned = __old_pins__
     for i in range(len(pinned)):
         pin_names.append("")
+
+def flatten(x:list):
+    stack = [x]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, (list, tuple)):
+            stack.extend(reversed(current))
+        else:
+            yield current
 
 def is_archive(x:str,d:bool=False):
     if get_file_from_str(x).is_dir(): return False if not d else (False,None)
@@ -149,6 +159,32 @@ def betterWalk(path:str):
             if f.is_file():
                 r.append(f)
     return tuple(r)
+
+class extractCallback7z(py7zr.callbacks.ExtractCallback):
+    def __init__(self, window):
+        super().__init__()
+        self.window = window
+
+    def report_start_preparation(self):
+        pass
+
+    def report_start(self, processing_file_path, processing_bytes):
+        self.window.working_prog.setMaximum(int(processing_bytes))
+        self.window.working_prog.setValue(0)
+        self.window.tog_el((self.window.working_prog,),True)
+
+    def report_update(self, decompressed_bytes):
+        self.window.working_prog.setValue(int(decompressed_bytes))
+
+    def report_end(self, processing_file_path, wrote_bytes):
+        self.window.tog_el((self.window.working_prog,),False)
+        self.window.working_prog.setValue(0)
+
+    def report_postprocess(self):
+        pass
+
+    def report_warning(self, message):
+        pass
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -308,17 +344,30 @@ class MainWindow(QMainWindow):
 
         self.error_msg = QErrorMessage(self)
 
-        self.working = QLabel("Working...")
-        self.working.setFixedWidth(225)
-        self.working.setFixedHeight(75)
-        self.working.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.working = QFrame(self)
+        self.working.setFixedSize(225,150)
+        self.working.setWindowTitle("Working...")
+        self.working.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.CoverWindow | Qt.WindowType.WindowStaysOnTopHint)
+
+        self.working_layout = QVBoxLayout()
+
+        self.working_lbl = QLabel("Working...")
+        self.working_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         _font = QFont(self.font())
         _font.setPointSize(30)
-        self.working.setFont(_font)
+        self.working_lbl.setFont(_font)
+
+        self.working_prog = QProgressBar()
+        self.working_prog.setAlignment(Qt.AlignmentFlag.AlignLeft)
+
+        self.working_layout.addWidget(self.working_lbl)
+        self.working_layout.addWidget(self.working_prog)
+
+        self.working.setLayout(self.working_layout)
 
         self.about_frame = QFrame()
         self.about_frame.setGeometry(int(screeninfo.get_monitors()[0].width/2 - 300), int(screeninfo.get_monitors()[0].height/2 - 200), 600, 400)
-        self.about_frame.setWindowFlag(Qt.WindowType.Popup)
+        self.about_frame.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Popup)
 
         about_title = QLabel("About Pyles")
         about_title.setFixedWidth(600)
@@ -407,7 +456,7 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self.show_about)
 
         self.start()
-
+    
     def start(self):
         self.add_tab()
         self.get_files()
@@ -454,10 +503,15 @@ class MainWindow(QMainWindow):
     def new_window(self):
         MainWindow().show()
 
-    def tog_el(self,els:tuple,val=-1):
+    def tog_el(self,els:tuple,val=-1,disableMainWindow:bool=False):
+        if disableMainWindow:
+            if type(val) != bool:
+                self.setDisabled(not els[0].isVisible())
+            else:
+                self.setDisabled(val)
         for el in els:
             try:
-                if val != True and val != False:
+                if type(val) != bool:
                     el.setVisible(not el.isVisible())
                 else:
                     el.setVisible(val)
@@ -714,7 +768,7 @@ class MainWindow(QMainWindow):
         if _path != root[:-1]:
             self.get_files(_path)
         else:
-            self.get_files(f"{root}")
+            self.get_files(f"print(dir){root}")
 
     def extract_archive(self,file:os.DirEntry,ask_where:bool=False):
         v,ty = is_archive(file.path,True)
@@ -749,7 +803,7 @@ class MainWindow(QMainWindow):
                     if password == "": password = None
                 try:
                     with py7zr.SevenZipFile(file.path,"r",password=password) as f:
-                        f.extractall(pathlib.Path(dir))
+                        f.extractall(path=pathlib.Path(dir),callback=extractCallback7z(self))
                 except Exception as e:
                     os.remove(dir)
                     self.error_msg.showMessage(str(e))
@@ -836,44 +890,56 @@ class MainWindow(QMainWindow):
             elif self.smode == 1:
                 def a():
                     nonlocal ls
+                    ind = 0
+                    self.working_prog.setValue(0)
+                    _max = len(list(flatten(list(os.walk(self.tabs[self.tab][0])))))
+                    self.working_prog.setMaximum(_max)
                     for ds,_,_ in os.walk(self.tabs[self.tab][0]):
                         d = "".join(ds)
+                        ind+=1
+                        self.working_prog.setValue(ind)
                         for f in os.scandir(d):
-                            if f.is_file():
-                                vis = False
-                                n = f.name.lower()
-                                if n == query:
-                                    vis = True
-                                elif n.find(query) != -1:
-                                    vis = True
-                                if vis == True:
-                                    ls.append(f)
+                            ind+=1
+                            self.working_prog.setValue(ind)
+                            vis = False
+                            n = f.name.lower()
+                            if n == query:
+                                vis = True
+                            elif n.find(query) != -1:
+                                vis = True
+                            if vis == True:
+                                ls.append(f)
                     b()
                     self.get_files(self.tabs[self.tab][0],ls)
-                    self.working.setVisible(False)
-                self.working.setVisible(True)
+                    self.tog_el((self.working,),False)
+                self.tog_el((self.working,),True)
                 QTimer.singleShot(100,a)
             elif self.smode == 2:
                 def a():
                     nonlocal ls
-                    for ds,_,_ in os.walk(f"{s}"):
+                    ind = 0
+                    self.working_prog.setValue(0)
+                    _max = len(list(flatten(list(os.walk(root)))))
+                    self.working_prog.setMaximum(_max)
+                    for ds,_,_ in os.walk(root):
                         d = "".join(ds)
+                        ind+=1
+                        self.working_prog.setValue(ind)
                         for f in os.scandir(d):
-                            try:
-                                if f.is_file():
-                                    vis = False
-                                    n = f.name.lower()
-                                    if n == query:
-                                        vis = True
-                                    elif n.find(query) != -1:
-                                        vis = True
-                                    if vis == True:
-                                        ls.append(f)
-                            except:pass
+                            ind+=1
+                            self.working_prog.setValue(ind)
+                            vis = False
+                            n = f.name.lower()
+                            if n == query:
+                                vis = True
+                            elif n.find(query) != -1:
+                                vis = True
+                            if vis == True:
+                                ls.append(f)
                     b()
                     self.get_files(self.tabs[self.tab][0],ls)
-                    self.working.setVisible(False)
-                self.working.setVisible(True)
+                    self.tog_el((self.working,),False)
+                self.tog_el((self.working,),True)
                 QTimer.singleShot(100, a)
         else:
             self.sfiles = []
