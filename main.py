@@ -1,10 +1,12 @@
-from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QFrame, QScrollArea, QHBoxLayout, QLineEdit, QCheckBox, QMenu, QInputDialog, QErrorMessage, QMessageBox, QLabel, QStyle
+from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QFrame, QScrollArea, QHBoxLayout, QLineEdit, QCheckBox, QMenu, QInputDialog, QErrorMessage, QMessageBox, QLabel, QStyle, QProgressBar
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QAction
 from functools import partial
-import os, sys, shutil, subprocess, random, send2trash, json, screeninfo, webbrowser, ctypes
+import py7zr.callbacks
+import py7zr.py7zr
+import os, sys, shutil, subprocess, random, send2trash, json, screeninfo, webbrowser, ctypes, zipfile, tarfile, py7zr, tempfile, pathlib
 
-__version__ = "1.0.7"
+__version__ = "1.0.8pre-2"
 
 if sys.platform == "win32":
     import win32com.client
@@ -29,17 +31,17 @@ else:
         myEnv.pop(lp_key)
 
 program_path = f"{home}{s}{user}"
-try:
-    os.mkdir(program_path+f"{s}.Pyles")
-except:pass
+pyles_path = f"{program_path}{s}.Pyles"
+if not os.path.exists(pyles_path):
+    os.mkdir(pyles_path)
 __old_pins__ = None
-if os.path.exists(program_path+f"{s}.Pyles{s}pins.json"):
-    with open(program_path+f"{s}.Pyles{s}pins.json","r") as _f:
+if os.path.exists(f"{pyles_path}{s}pins.json"):
+    with open(f"{pyles_path}{s}pins.json","r") as _f:
         f = json.load(_f)
         __old_pins__ = f
-    send2trash.send2trash(program_path+f"{s}.Pyles{s}pins.json")
-if os.path.exists(program_path+f"{s}.Pyles{s}conf.json"):
-    config = open(program_path+f"{s}.Pyles{s}conf.json","r")
+    send2trash.send2trash(f"{pyles_path}{s}pins.json")
+if os.path.exists(f"{pyles_path}{s}conf.json"):
+    config = open(f"{pyles_path}{s}conf.json","r")
     try:
         config_json = json.load(config)
         __pinned__ = []
@@ -53,7 +55,7 @@ if os.path.exists(program_path+f"{s}.Pyles{s}conf.json"):
     except Exception as e:
         print(e)
 else:
-    config = open(program_path+f"{s}.Pyles{s}conf.json","w")
+    config = open(f"{pyles_path}{s}conf.json","w")
     config.write(r'{"pinned":{},"siz":null,"pos":null}')
 config.close()
 
@@ -62,8 +64,39 @@ if __old_pins__ and (not pinned or pinned == []):
     for i in range(len(pinned)):
         pin_names.append("")
 
+def flatten(x:list):
+    stack = [x]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, (list, tuple)):
+            stack.extend(reversed(current))
+        else:
+            yield current
+
+def is_archive(x:str,d:bool=False):
+    if get_file_from_str(x).is_dir(): return False if not d else (False,None)
+    if py7zr.is_7zfile(x): return True if not d else (True,"7z")
+    if tarfile.is_tarfile(x): return True if not d else (True,"tar")
+    if zipfile.is_zipfile(x): return True if not d else (True,"zip")
+    return False if not d else (False,None)
+
+def get_tar_type(_dir:str):
+    with open(_dir,"rb") as f:
+        sig = f.read(6)
+        if sig.startswith(b"\x1f\x8b"):
+            return "gz"
+        elif sig.startswith(b"BZ"):
+            return "bz2"
+        elif sig.startswith(b"\xfd7zXZ"):
+            return "xz"
+        else:
+            return ""
+
+def sep_path(x:str,o:str):
+    return x[len(o)+1:]
+
 def save_conf(window):
-    _pinned = open(program_path+f"{s}.Pyles{s}conf.json","w")
+    _pinned = open(f"{pyles_path}{s}conf.json","w")
     __pinned__ = {}
     for i,x in enumerate(pinned):
         __pinned__[x] = pin_names[i]
@@ -118,6 +151,41 @@ class _f:
     def is_file(self) -> bool:
         return not self._x.IsFolder
 
+def betterWalk(path:str):
+    r = []
+    for ds,_,_ in os.walk(path):
+        d = "".join(ds)
+        for f in os.scandir(d):
+            if f.is_file():
+                r.append(f)
+    return tuple(r)
+
+class extractCallback7z(py7zr.callbacks.ExtractCallback):
+    def __init__(self, window):
+        super().__init__()
+        self.window = window
+
+    def report_start_preparation(self):
+        pass
+
+    def report_start(self, processing_file_path, processing_bytes):
+        self.window.working_prog.setMaximum(int(processing_bytes))
+        self.window.working_prog.setValue(0)
+        self.window.tog_el((self.window.working_prog,),True)
+
+    def report_update(self, decompressed_bytes):
+        self.window.working_prog.setValue(int(decompressed_bytes))
+
+    def report_end(self, processing_file_path, wrote_bytes):
+        self.window.tog_el((self.window.working_prog,),False)
+        self.window.working_prog.setValue(0)
+
+    def report_postprocess(self):
+        pass
+
+    def report_warning(self, message):
+        pass
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -126,7 +194,7 @@ class MainWindow(QMainWindow):
         siz = [800,600]
         pos[0] -= siz[0]/2
         pos[1] -= siz[1]/2
-        with open(program_path+f"{s}.Pyles{s}conf.json","r") as _f:
+        with open(f"{pyles_path}{s}conf.json","r") as _f:
             f = json.load(_f)
             try:
                 if f["pos"]: pos = f["pos"]
@@ -135,6 +203,8 @@ class MainWindow(QMainWindow):
                 if f["siz"]: siz = f["siz"]
             except:pass
         self.setGeometry(int(pos[0]), int(pos[1]), int(siz[0]), int(siz[1]))  # x, y, width, height
+
+        self.tempdirs = {}
 
         self.sfiles = []
 
@@ -274,17 +344,30 @@ class MainWindow(QMainWindow):
 
         self.error_msg = QErrorMessage(self)
 
-        self.working = QLabel("Working...")
-        self.working.setFixedWidth(225)
-        self.working.setFixedHeight(75)
-        self.working.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.working = QFrame(self)
+        self.working.setFixedSize(225,150)
+        self.working.setWindowTitle("Working...")
+        self.working.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.CoverWindow | Qt.WindowType.WindowStaysOnTopHint)
+
+        self.working_layout = QVBoxLayout()
+
+        self.working_lbl = QLabel("Working...")
+        self.working_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         _font = QFont(self.font())
         _font.setPointSize(30)
-        self.working.setFont(_font)
+        self.working_lbl.setFont(_font)
+
+        self.working_prog = QProgressBar()
+        self.working_prog.setAlignment(Qt.AlignmentFlag.AlignLeft)
+
+        self.working_layout.addWidget(self.working_lbl)
+        self.working_layout.addWidget(self.working_prog)
+
+        self.working.setLayout(self.working_layout)
 
         self.about_frame = QFrame()
         self.about_frame.setGeometry(int(screeninfo.get_monitors()[0].width/2 - 300), int(screeninfo.get_monitors()[0].height/2 - 200), 600, 400)
-        self.about_frame.setWindowFlag(Qt.WindowType.Popup)
+        self.about_frame.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Popup)
 
         about_title = QLabel("About Pyles")
         about_title.setFixedWidth(600)
@@ -327,7 +410,6 @@ class MainWindow(QMainWindow):
         new_menu_file.triggered.connect(partial(self.add_file,2))
         new_menu_folder.triggered.connect(partial(self.add_file,3))
 
-        menu_file.addSeparator()
 
         new_window_action = QAction("New &Window",self)
         menu_file.addAction(new_window_action)
@@ -336,9 +418,14 @@ class MainWindow(QMainWindow):
 
         menu_file.addSeparator()
 
+        cleanup_action = QAction("&Cleanup Temp Files",self)
+        cleanup_action.triggered.connect(self.cleanup_temp)
+        menu_file.addAction(cleanup_action)
+
+        menu_file.addSeparator()
+
         exit_action = QAction("E&xit",self)
         menu_file.addAction(exit_action)
-
         exit_action.triggered.connect(self.close)
 
         menu_edit = QMenu("&Edit",self)
@@ -358,7 +445,7 @@ class MainWindow(QMainWindow):
             menu_edit.addAction(edit_conf)
 
         save = QAction("S&ave Preferences",self)
-        save.triggered.connect(partial(save_conf,self))
+        save.triggered.connect(self.save_conf)
         menu_edit.addAction(save)
 
         menu_help = QMenu("&Help",self)
@@ -369,16 +456,42 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self.show_about)
 
         self.start()
-
+    
     def start(self):
         self.add_tab()
         self.get_files()
         for i,x in enumerate(pinned):
-            if not get_file_from_str(x): continue
+            if not os.path.exists(x) and x != trash: continue
             self.pin_tab(x,True,pin_names[i])
         self.search_inp.setVisible(False)
         self.search_go.setVisible(False)
 
+    def save_conf(self):
+        try:
+            save_conf(self)
+            QMessageBox.information(self,"Save Preferences","Preferences Saved!",QMessageBox.StandardButton.Ok)
+        except Exception as e:
+            self.error_msg.showMessage(str(e))
+    
+    def cleanup_temp(self):
+        for x in self.tempdirs.values():
+            x.cleanup()
+        self.tempdirs = {}
+    
+    def fix_history(self):
+        new = []
+        for i,x in enumerate(self.tabs[self.tab][3]):
+            if os.path.exists(x):
+                new.append(x)
+            else:
+                if i <= self.tabs[self.tab][4]:
+                    self.tabs[self.tab][4] -= 1
+        if self.tabs[self.tab][4] < 0:
+            self.tabs[self.tab][4] = 0
+        elif self.tabs[self.tab][4] > len(self.tabs[self.tab][3])-1:
+            self.tabs[self.tab][4] = len(self.tabs[self.tab][3])-1
+        self.tabs[self.tab][4] = new
+    
     def show_about(self):
         self.about_frame.setGeometry(int((self.pos().x() + (self.width()/2)) - 300), int((self.pos().y() + (self.height()/2)) - 200), 600, 400)
         self.tog_el((self.about_frame,),True)
@@ -390,10 +503,15 @@ class MainWindow(QMainWindow):
     def new_window(self):
         MainWindow().show()
 
-    def tog_el(self,els:tuple,val=-1):
+    def tog_el(self,els:tuple,val=-1,disableMainWindow:bool=False):
+        if disableMainWindow:
+            if type(val) != bool:
+                self.setDisabled(not els[0].isVisible())
+            else:
+                self.setDisabled(val)
         for el in els:
             try:
-                if val != True and val != False:
+                if type(val) != bool:
                     el.setVisible(not el.isVisible())
                 else:
                     el.setVisible(val)
@@ -406,15 +524,14 @@ class MainWindow(QMainWindow):
         self.open_file(f or t)
 
     def open_file(self, f):
-        print(f)
         if f:
             if type(f) != str:
-                if f.is_dir():
+                if f.is_dir() or is_archive(f.path):
                     self.get_files(f.path)
                 else:
                     open_file_with_default_program(f)
             else:
-                if f.lower() != "trash":
+                if f.lower() != "trash" and not os.path.exists(f):
                     self.get_files(root)
                 else:
                     self.get_files(f)
@@ -442,16 +559,21 @@ class MainWindow(QMainWindow):
             subprocess.Popen(["openwith.exe",f.path],env=myEnv)
             # os.system(f'openwith.exe "{f.path}"')
 
-    def get_files(self,_dir=f"~",fi=None,refresh:bool=False):
+    def get_files(self,_dir=f"~",fi=None,refresh:bool=False,save:bool=True):
         if not refresh: self.sfiles = []
         if fi == []: fi = None
         if _dir == "~":
             _dir = f"{home}{s}{user}"
         if _dir.lower() == "trash":
            _dir = trash
-        if _dir != self.tabs[self.tab][0] and not _dir in self.tabs[self.tab][3]:
-            self.tabs[self.tab][3].insert(self.tabs[self.tab][4]+1,_dir)
-            self.tabs[self.tab][4] += 1
+        if _dir != trash and not os.path.exists(_dir):
+            self.error_msg.showMessage(f"Path {_dir} does not exist.")
+            return
+        print(_dir)
+        if save:
+            if _dir != self.tabs[self.tab][0] and not _dir in self.tabs[self.tab][3]:
+                self.tabs[self.tab][3].insert(self.tabs[self.tab][4]+1,_dir)
+                self.tabs[self.tab][4] += 1
         if not (sys.platform == "win32" and _dir == trash):
             self.path = _dir
             self.setWindowTitle(f"Pyles | {self.path}")
@@ -473,21 +595,78 @@ class MainWindow(QMainWindow):
             self.files = []
             self.hfiles = []
             if not fi and self.sfiles == []:
-                try:
-                    for f in os.scandir(_dir):
-                        fButton = QPushButton(f.name + (f"{s}" if f.is_dir() else ""))
-                        fButton.clicked.connect(partial(self.open_file, f))
-                        fButton.setStyleSheet("background-color: a();")
-                        fButton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-                        fButton.customContextMenuRequested.connect(partial(self.file_context,f,fButton))
-                        fButton.setToolTip(f.path)
-                        self.scroll_layout.addWidget(fButton)
-                        if (f.name[0] == "." and sys.platform == "linux") or (sys.platform == "win32" and (ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2)):
-                            fButton.hide()
-                            self.hfiles.append(fButton)
-                        self.files.append(fButton)
-                except Exception as e:
-                    self.error_msg.showMessage(str(e))
+                is_7z = False
+                is_tar = False
+                is_zip = False
+                if get_file_from_str(_dir) and type(get_file_from_str(_dir)) != str and get_file_from_str(_dir).is_file():
+                    is_7z = py7zr.is_7zfile(_dir)
+                    is_tar = tarfile.is_tarfile(_dir)
+                    is_zip = zipfile.is_zipfile(_dir)
+                if not is_7z and not is_tar and not is_zip:
+                    try:
+                        for f in os.scandir(_dir):
+                            fButton = QPushButton(f.name + (f"{s}" if f.is_dir() else ""))
+                            fButton.clicked.connect(partial(self.open_file, f))
+                            fButton.setStyleSheet("background-color: a();")
+                            fButton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                            fButton.customContextMenuRequested.connect(partial(self.file_context,f,fButton))
+                            fButton.setToolTip(f.path)
+                            self.scroll_layout.addWidget(fButton)
+                            if (f.name[0] == "." and sys.platform == "linux") or (sys.platform == "win32" and (ctypes.windll.kernel32.GetFileAttributesW(f.path) & 0x2)):
+                                fButton.hide()
+                                self.hfiles.append(fButton)
+                            self.files.append(fButton)
+                    except Exception as e:
+                        self.error_msg.showMessage(str(e))
+                else:
+                    if is_7z:
+                        # 7z
+                        if not _dir in self.tempdirs.keys():
+                            tmpdir = tempfile.TemporaryDirectory()
+                            self.tempdirs[_dir] = tmpdir
+                            req_pass = False
+                            with py7zr.SevenZipFile(_dir,"r") as archive:
+                                req_pass = archive.password_protected
+                            password = None
+                            if req_pass:
+                                password, ok = QInputDialog.getText(self, "Compress File", "Archive Password")
+                                if not ok: self.back_one_dir(); tmpdir.cleanup(); del self.tempdirs[_dir]; return
+                                if password == "": password = None
+                            try:
+                                with py7zr.SevenZipFile(_dir,"r",password=password) as archive:
+                                    archive.extractall(path=pathlib.Path(tmpdir.name))
+                            except Exception as e:
+                                self.error_msg.showMessage(str(e))
+                                tmpdir.cleanup()
+                                del self.tempdirs[_dir]
+                                return
+                            self.get_files(tmpdir.name,save=False)
+                        else:
+                            tmpdir = self.tempdirs[_dir]
+                            self.get_files(tmpdir.name,save=False)
+                    elif is_tar:
+                        # tar/targz/tarxz/tarbz2
+                        if not _dir in self.tempdirs.keys():
+                            tmpdir = tempfile.TemporaryDirectory()
+                            self.tempdirs[_dir] = tmpdir
+                            ty = get_tar_type(_dir)
+                            with tarfile.open(_dir,"r:"+ty) as archive:
+                                archive.extractall(tmpdir.name)
+                            self.get_files(tmpdir.name)
+                        else:
+                            tmpdir = self.tempdirs[_dir]
+                            self.get_files(tmpdir.name)
+                    else:
+                        # zip
+                        if not _dir in self.tempdirs.keys():
+                            tmpdir = tempfile.TemporaryDirectory()
+                            self.tempdirs[_dir] = tmpdir
+                            with zipfile.ZipFile(_dir,"r") as archive:
+                                archive.extractall(tmpdir.name)
+                            self.get_files(tmpdir.name)
+                        else:
+                            tmpdir = self.tempdirs[_dir]
+                            self.get_files(tmpdir.name)
             else:
                 if not fi:
                     fi = self.sfiles
@@ -568,9 +747,9 @@ class MainWindow(QMainWindow):
         self.tabs[self.tab][4] -= 1
         if self.tabs[self.tab][4] < 0:
             self.tabs[self.tab][4] = 0
-        else:
-            self.tabs[self.tab][0] = self.tabs[self.tab][3][self.tabs[self.tab][4]]
-            # del self.tabs[self.tab][3][self.tabs[self.tab][4]]
+        if not os.path.exists(self.tabs[self.tab][3][self.tabs[self.tab][4]]):
+            self.fix_history()
+        self.tabs[self.tab][0] = self.tabs[self.tab][3][self.tabs[self.tab][4]]
         self.get_files(self.tabs[self.tab][0])
         print(self.tabs[self.tab][3],self.tabs[self.tab][4])
 
@@ -578,9 +757,9 @@ class MainWindow(QMainWindow):
         self.tabs[self.tab][4] += 1
         if self.tabs[self.tab][4] > len(self.tabs[self.tab][3])-1:
             self.tabs[self.tab][4] = len(self.tabs[self.tab][3])-1
-        else:
-            self.tabs[self.tab][0] = self.tabs[self.tab][3][self.tabs[self.tab][4]]
-            # del self.tabs[self.tab][3][self.tabs[self.tab][4]]
+        if not os.path.exists(self.tabs[self.tab][3][self.tabs[self.tab][4]]):
+            self.fix_history()
+        self.tabs[self.tab][0] = self.tabs[self.tab][3][self.tabs[self.tab][4]]
         self.get_files(self.tabs[self.tab][0])
         print(self.tabs[self.tab][3],self.tabs[self.tab][4])
 
@@ -589,8 +768,77 @@ class MainWindow(QMainWindow):
         if _path != root[:-1]:
             self.get_files(_path)
         else:
-            self.get_files(f"{root}")
+            self.get_files(f"print(dir){root}")
 
+    def extract_archive(self,file:os.DirEntry,ask_where:bool=False):
+        v,ty = is_archive(file.path,True)
+        if not v: self.error_msg.showMessage(f"File {file.path} is not an archive."); return
+        dir = self.tabs[self.tab][0]
+        if ask_where:
+            _dir, ok = QInputDialog.getText(self,"Extract Archive","Where would you like to extract to?")
+            if not ok: return
+            if _dir[:2] == f"~{s}":
+                _dir = f"{home}{s}{user}{s}{_dir[2:]}"
+            elif _dir[:2] == f".{s}":
+                _dir = f"{self.tabs[self.tab][0]}{s}{_dir[2:]}"
+            if not os.path.exists(_dir): self.error_msg.showMessage(f"Path {_dir} does not exist."); return
+            dir = _dir
+        try:
+            if ty == "7z":
+                name = file.name
+                if name[-3:] == ".7z": name = name[:-3] # .7z
+                dir += s+name
+                if not os.path.exists(dir):
+                    os.mkdir(dir)
+                else:
+                    self.error_msg.showMessage(f"Path {dir} already exists."); return
+
+                req_pass = False
+                with py7zr.SevenZipFile(file.path,"r") as f:
+                    req_pass = f.password_protected
+                password = None
+                if req_pass:
+                    password, ok = QInputDialog.getText(self, "Extract Archive", "Archive Password")
+                    if not ok: os.rmdir(dir); return
+                    if password == "": password = None
+                try:
+                    with py7zr.SevenZipFile(file.path,"r",password=password) as f:
+                        f.extractall(path=pathlib.Path(dir),callback=extractCallback7z(self))
+                except Exception as e:
+                    os.remove(dir)
+                    self.error_msg.showMessage(str(e))
+                    return
+            elif ty == "tar":
+                name = file.name
+                if name[-4:] == ".tar": name = name[:-4] # .tar
+                if name[-8:] == ".tar.bz2": name = name[:-8] # .tar.bz2
+                if name[-7:] == ".tar.gz": name = name[:-7] # .tar.gz
+                if name[-7:] == ".tar.xz": name = name[:-7] # .tar.xz
+                dir += s+name
+                if not os.path.exists(dir):
+                    os.mkdir(dir)
+                else:
+                    self.error_msg.showMessage(f"Path {dir} already exists."); return
+                
+                ty = get_tar_type(file.path)
+                with tarfile.open(file.path,"r"+ty) as f:
+                    f.extractall(dir)
+            elif ty == "zip":
+                name = file.name
+                if name[-4:] == ".zip": name = name[:-4] # .zip
+                dir += s+name
+                if not os.path.exists(dir):
+                    os.mkdir(dir)
+                else:
+                    self.error_msg.showMessage(f"Path {dir} already exists."); return
+                
+                with zipfile.ZipFile(file.path,"r") as f:
+                    f.extractall(dir)
+            self.refresh()
+        except Exception as e:
+            self.error_msg.showMessage(str(e))
+        
+    
     def add_file(self,ty):
         if not ty:
             msg = QMessageBox()
@@ -642,44 +890,56 @@ class MainWindow(QMainWindow):
             elif self.smode == 1:
                 def a():
                     nonlocal ls
+                    ind = 0
+                    self.working_prog.setValue(0)
+                    _max = len(list(flatten(list(os.walk(self.tabs[self.tab][0])))))
+                    self.working_prog.setMaximum(_max)
                     for ds,_,_ in os.walk(self.tabs[self.tab][0]):
                         d = "".join(ds)
+                        ind+=1
+                        self.working_prog.setValue(ind)
                         for f in os.scandir(d):
-                            if f.is_file():
-                                vis = False
-                                n = f.name.lower()
-                                if n == query:
-                                    vis = True
-                                elif n.find(query) != -1:
-                                    vis = True
-                                if vis == True:
-                                    ls.append(f)
+                            ind+=1
+                            self.working_prog.setValue(ind)
+                            vis = False
+                            n = f.name.lower()
+                            if n == query:
+                                vis = True
+                            elif n.find(query) != -1:
+                                vis = True
+                            if vis == True:
+                                ls.append(f)
                     b()
                     self.get_files(self.tabs[self.tab][0],ls)
-                    self.working.setVisible(False)
-                self.working.setVisible(True)
+                    self.tog_el((self.working,),False)
+                self.tog_el((self.working,),True)
                 QTimer.singleShot(100,a)
             elif self.smode == 2:
                 def a():
                     nonlocal ls
-                    for ds,_,_ in os.walk(f"{s}"):
+                    ind = 0
+                    self.working_prog.setValue(0)
+                    _max = len(list(flatten(list(os.walk(root)))))
+                    self.working_prog.setMaximum(_max)
+                    for ds,_,_ in os.walk(root):
                         d = "".join(ds)
+                        ind+=1
+                        self.working_prog.setValue(ind)
                         for f in os.scandir(d):
-                            try:
-                                if f.is_file():
-                                    vis = False
-                                    n = f.name.lower()
-                                    if n == query:
-                                        vis = True
-                                    elif n.find(query) != -1:
-                                        vis = True
-                                    if vis == True:
-                                        ls.append(f)
-                            except:pass
+                            ind+=1
+                            self.working_prog.setValue(ind)
+                            vis = False
+                            n = f.name.lower()
+                            if n == query:
+                                vis = True
+                            elif n.find(query) != -1:
+                                vis = True
+                            if vis == True:
+                                ls.append(f)
                     b()
                     self.get_files(self.tabs[self.tab][0],ls)
-                    self.working.setVisible(False)
-                self.working.setVisible(True)
+                    self.tog_el((self.working,),False)
+                self.tog_el((self.working,),True)
                 QTimer.singleShot(100, a)
         else:
             self.sfiles = []
@@ -744,7 +1004,7 @@ class MainWindow(QMainWindow):
             else:
                 n = name
             pinB = QPushButton(n)
-            pinB.clicked.connect(partial(self.open_file,get_file_from_str(dir)))
+            pinB.clicked.connect(partial(self.open_file,get_file_from_str(dir) if get_file_from_str(dir) else dir))
             pinB.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             pinB.customContextMenuRequested.connect(partial(self.pin_context,dir))
             pinB.setToolTip(dir)
@@ -837,8 +1097,13 @@ class MainWindow(QMainWindow):
 
     def pin_context(self,dir,position):
         menu = QMenu()
-        if not get_file_from_str(dir): return
-        if dir == "trash" or get_file_from_str(dir).is_dir():
+        _root = False
+        if not os.path.exists(dir): return
+        if not get_file_from_str(dir): _root = True
+        if dir == trash:
+            etrash = menu.addAction("Empty trash")
+            etrash.triggered.connect(partial(self.delete_file,"EMPTY_TRASH"))
+        if dir == trash or (_root or get_file_from_str(dir).is_dir()):
             otab = menu.addAction("Open in new tab")
             otab.triggered.connect(partial(self.add_tab,dir))
         else:
@@ -876,6 +1141,18 @@ class MainWindow(QMainWindow):
             move.triggered.connect(partial(self.move_file,f))
             copy = menu.addAction("Copy to...")
             copy.triggered.connect(partial(self.copy_file,f))
+        if is_archive(f.path):
+            extracth = menu.addAction("Extract here")
+            extracth.triggered.connect(partial(self.extract_archive,f))
+            extract = menu.addAction("Extract to...")
+            extract.triggered.connect(partial(self.extract_archive,f,True))
+        compress = menu.addAction("Compress to...")
+        if f.is_file():
+            compress.triggered.connect(partial(self.make_archive,f))
+        else:
+            files = betterWalk(f.path)
+            compress.triggered.connect(partial(self.make_archive,files))
+        
         delete = menu.addAction("Delete")
         delete.triggered.connect(partial(self.delete_file,f))
         if not (self.tabs[self.tab][0] == trash and sys.platform == "win32"):
@@ -891,7 +1168,65 @@ class MainWindow(QMainWindow):
         nfolder.triggered.connect(partial(self.add_file,3))
         menu.exec(self.new_file.mapToGlobal(position))
 
+    def make_archive(self,files:os.DirEntry|tuple[os.DirEntry,...]):
+        archive_types = [
+            (py7zr.SevenZipFile,"7z",""),
+            (tarfile.open,"tar",""),
+            (tarfile.open,"tar.bz2",":bz2"),
+            (tarfile.open,"tar.gz",":gz"),
+            (tarfile.open,"tar.xz",":xz"),
+            (zipfile.ZipFile,"zip","")
+        ]
+        ty = QMessageBox()
+        ty.setWindowTitle("Compress File")
+        ty.setText("What type of compression would you like to use?")
+        ty.setIcon(QMessageBox.Icon.Question)
+        ty.addButton("7Zip", QMessageBox.ButtonRole.ActionRole) # 2
+        ty.addButton("Tar (uncompressed)", QMessageBox.ButtonRole.ActionRole) # 3
+        ty.addButton("Tar BZip2 (bz2)", QMessageBox.ButtonRole.ActionRole) # 4
+        ty.addButton("Tar GZip (gz)", QMessageBox.ButtonRole.ActionRole) # 5
+        ty.addButton("Tar LZMA (xz)", QMessageBox.ButtonRole.ActionRole) # 6
+        ty.addButton("Zip", QMessageBox.ButtonRole.ActionRole) # 7
+        ty.setStandardButtons(QMessageBox.StandardButton.Cancel)
+        ty.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        x = ty.exec()
+        if x == QMessageBox.StandardButton.Cancel: return
+        name, ok = QInputDialog.getText(self, "Compress File", "Archive Name (w/o file extension)")
+        if not ok or not name or name == "": return
+        try:
+            _arch = archive_types[x-2]
+            name = f"{self.tabs[self.tab][0]}{s}{name}.{_arch[1]}"
+            if os.path.exists(name): raise FileExistsError(f"File already exists: {name}")
+            def __add_file__(archive,x,file:os.DirEntry):
+                if x-2 != 0 and x-2 != 5:
+                    archive.add(file.path,arcname=sep_path(file.path,self.tabs[self.tab][0]))
+                else:
+                    archive.write(file.path,arcname=sep_path(file.path,self.tabs[self.tab][0]))
+            archive = None
+            if x-2 != 0:
+                archive = _arch[0](name,"w"+_arch[2])
+            else:
+                password, ok = QInputDialog.getText(self, "Compress File", "Archive Password")
+                if not ok: password = ""
+                if password != "":
+                    archive = _arch[0](name,"w"+_arch[2],password=password)
+                else:
+                    archive = _arch[0](name,"w"+_arch[2])
+            if not archive: return
+            if type(files) == os.DirEntry:
+                __add_file__(archive,x,files)
+            else:
+                for f in files:
+                    __add_file__(archive,x,f)
+            archive.close()
+            self.refresh()
+        except Exception as e:
+            self.error_msg.showMessage(str(e))
+    
     def trash_file(self,f:os.DirEntry):
+        if f.path in self.tempdirs.keys():
+            self.tempdirs[f.path].cleanup()
+            del self.tempdirs[f.path]
         if os.path.exists(f.path):
             send2trash.send2trash(f.path)
             self.refresh()
@@ -907,6 +1242,9 @@ class MainWindow(QMainWindow):
             msg.setDefaultButton(QMessageBox.StandardButton.No)
             x = msg.exec()
             if x == QMessageBox.StandardButton.Yes:
+                if f.path in self.tempdirs.keys():
+                    self.tempdirs[f.path].cleanup()
+                    del self.tempdirs[f.path]
                 if os.path.exists(f.path):
                     if f.is_file():
                         try:
@@ -1041,3 +1379,4 @@ if __name__ == "__main__":
     window.show()
     app.exec()
     save_conf(window)
+    window.cleanup_temp()
